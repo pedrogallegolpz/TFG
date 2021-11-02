@@ -15,7 +15,7 @@ nncode-block-font-size: \scriptsize
 
 # Documentación de partida
 
-# Artículos sobre explicabilidad en CNNs
+## Artículos sobre explicabilidad en CNNs
 
 - Survey sobre XAI: <https://arxiv.org/abs/1910.10045> (<https://www.sciencedirect.com/science/article/pii/S1566253519308103>)
 - Versiones de Grad-CAM
@@ -26,5 +26,9 @@ nncode-block-font-size: \scriptsize
 
 - Repositorio de código con implementaciones de los cuatro métodos: [https://github.com/yiskw713/SmoothGradCAMplusplus](https://github.com/yiskw713/SmoothGradCAMplusplus)
 
-- Posibles aplicaciones (bases de datos):
-  - Localización de imágenes
+## Bases de datos
+- Segmentación de lesiones:
+  - ISIC 2018 (segmentación de lesiones cutáneas): <https://challenge.isic-archive.com/data/>
+  - Breast cancer dataset (segmentación de cánceres de mama)
+	- <https://www.tamps.cinvestav.mx/~wgomez/downloads.html>
+	- <https://scholar.cu.edu.eg/?q=afahmy/pages/dataset>
