@@ -7,6 +7,7 @@ toc-own-page: true
 titlepage: true
 titlepage-background: /home/fluque/.pandoc/backgrounds/ugr.pdf
 tables: true
+colorlinks: true
 urlcolor: 'blue'
 script-font-size: \scriptsize
 nncode-block-font-size: \scriptsize
@@ -16,14 +17,14 @@ nncode-block-font-size: \scriptsize
 
 # Artículos sobre explicabilidad en CNNs
 
-- Survey sobre XAI: https://arxiv.org/abs/1910.10045 (https://www.sciencedirect.com/science/article/pii/S1566253519308103)
+- Survey sobre XAI: <https://arxiv.org/abs/1910.10045> (<https://www.sciencedirect.com/science/article/pii/S1566253519308103>)
 - Versiones de Grad-CAM
-  - Class Activation Mappings (punto de partida) - http://cnnlocalization.csail.mit.edu/
-  - Grad-CAM (Class Activation Mappings incluyendo el gradiente) - http://gradcam.cloudcv.org/
-  - Grad-CAM++ (Mejoras a GradCAM) - https://arxiv.org/abs/1710.11063
-  - Smooth Grad-CAM++ (Suavizado de GradCAM) - https://arxiv.org/abs/1908.01224 (incluye esta técnica: https://arxiv.org/abs/1706.03825)
+  - Class Activation Mappings (punto de partida) - [http://cnnlocalization.csail.mit.edu/](http://cnnlocalization.csail.mit.edu/)
+  - Grad-CAM (Class Activation Mappings incluyendo el gradiente) - [http://gradcam.cloudcv.org/](http://gradcam.cloudcv.org/)
+  - Grad-CAM++ (Mejoras a GradCAM) - [https://arxiv.org/abs/1710.11063](https://arxiv.org/abs/1710.11063)
+  - Smooth Grad-CAM++ (Suavizado de GradCAM) - <https://arxiv.org/abs/1908.01224> (incluye esta técnica: <https://arxiv.org/abs/1706.03825>)
 
-- Repositorio de código con implementaciones de los cuatro métodos: https://github.com/yiskw713/SmoothGradCAMplusplus
+- Repositorio de código con implementaciones de los cuatro métodos: [https://github.com/yiskw713/SmoothGradCAMplusplus](https://github.com/yiskw713/SmoothGradCAMplusplus)
 
 - Posibles aplicaciones (bases de datos):
   - Localización de imágenes
