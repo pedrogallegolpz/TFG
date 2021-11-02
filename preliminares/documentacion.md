@@ -1,0 +1,29 @@
+---
+title: "Documentación inicial"
+subtitle: "Trabajo de fin de grado"
+author: ["Pedro Gallego López", "Francisco Luque Sánchez"]
+date: "04/03/2020"
+toc-own-page: true
+titlepage: true
+titlepage-background: /home/fluque/.pandoc/backgrounds/ugr.pdf
+tables: true
+urlcolor: 'blue'
+script-font-size: \scriptsize
+nncode-block-font-size: \scriptsize
+---
+
+# Documentación de partida
+
+# Artículos sobre explicabilidad en CNNs
+
+- Survey sobre XAI: https://arxiv.org/abs/1910.10045 (https://www.sciencedirect.com/science/article/pii/S1566253519308103)
+- Versiones de Grad-CAM
+  - Class Activation Mappings (punto de partida) - http://cnnlocalization.csail.mit.edu/
+  - Grad-CAM (Class Activation Mappings incluyendo el gradiente) - http://gradcam.cloudcv.org/
+  - Grad-CAM++ (Mejoras a GradCAM) - https://arxiv.org/abs/1710.11063
+  - Smooth Grad-CAM++ (Suavizado de GradCAM) - https://arxiv.org/abs/1908.01224 (incluye esta técnica: https://arxiv.org/abs/1706.03825)
+
+- Repositorio de código con implementaciones de los cuatro métodos: https://github.com/yiskw713/SmoothGradCAMplusplus
+
+- Posibles aplicaciones (bases de datos):
+  - Localización de imágenes
