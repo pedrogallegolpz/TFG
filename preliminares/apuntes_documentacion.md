@@ -22,3 +22,21 @@ Relevant fragments:
   - 6.2 (fast reading)
     - Discrimination: problem, how to solve it (fast reading)
     - Accountability: read the 4 topic understanding the problem
+  - 6.3 "This section speculates with the potential of data fusion techniques to enrich the explainability of ML models and to compromise the privay of the data from which ML models are learned"
+    - Fig13: different data fusion kinds or methods
+    - 6.3.3 glance the section except the paragraphs where there are descriptions of XAI's implications .
+
+
+
+### 1.2 Class Activation Mappings
+
+- Section 1. Weakly-supervised object localization (IMPORTANT problem)
+- Section 2. The bible. Understanding the meaning of f_k(x,y), F^k and M_c(x,y).
+- Section 3.
+  - Subsection 3.1. how to add the GAP to the network. Sometimes it's necessary to add another Convolutional Layers, read about it.
+  - Subsection 3.2. Results.
+- Section 4. Doubts: What is `fc6,fc7`? (maybe fc = full connected?)
+  - Subsection 4.1. fast reading
+  - Subsection 4.2. Overlapping between scene and object and detecting patterns.
+- Section 5. Expected, fast reading.
+
