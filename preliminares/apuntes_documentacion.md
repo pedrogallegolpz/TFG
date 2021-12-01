@@ -22,7 +22,7 @@ Relevant fragments:
   - 6.2 (fast reading)
     - Discrimination: problem, how to solve it (fast reading)
     - Accountability: read the 4 topic understanding the problem
-  - 6.3 "This section speculates with the potential of data fusion techniques to enrich the explainability of ML models and to compromise the privay of the data from which ML models are learned"
+  - 6.3 "This section speculates about the potential of data fusion techniques to enrich the explainability of ML models and to compromise the privay of the data from which ML models are learned"
     - Fig13: different data fusion kinds or methods
     - 6.3.3 glance the section except the paragraphs where there are descriptions of XAI's implications .
 
@@ -39,4 +39,14 @@ Relevant fragments:
   - Subsection 4.1. fast reading
   - Subsection 4.2. Overlapping between scene and object and detecting patterns.
 - Section 5. Expected, fast reading.
+
+
+
+### 1.3 Grad-CAM
+
+- Subsection 5.3: i don't understand the method for evaluating fiathfulness
+
+### General doubts
+
+1. For example, at GradCAM they say that we apply RELU because "we are only interested in the features that have a positive influence". What is the meaning of a negative influence? Why are positive values  accepted and negatives not?
 
