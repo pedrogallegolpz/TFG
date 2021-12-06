@@ -44,7 +44,27 @@ Relevant fragments:
 
 ### 1.3 Grad-CAM
 
-- Subsection 5.3: i don't understand the method for evaluating fiathfulness
+- Subsection 5.3: i don't understand the method for evaluating faithfulness
+
+
+
+### 1.4 Grad-CAM++
+
+- Section 3.
+
+  - 3.1: **Intuition**. At the beginning, author says that the derivative: 
+    $$
+    \frac{\partial y^c}{\partial A^k_{ij}}
+    $$
+    must to be higher for the feature map pixels that contribute to the presence of the object. The explanation is: if you detect a pattern, this pattern can contribute to the presence of the object or not. A^k_{ij}=1 on the pixels where the pattern is detected. If this pattern contribute, then the weights must to be positive (or higher than other patterns which don't contribute) because the presence of the object is labeled by 1 and no presence is labeled by 0. "So the higher number you add, the more contribute to the presence of the object"
+
+  - 3.2: **Methodology**. Why is 
+    $$
+    \alpha_{ij}^{kc}
+    $$
+    defined like this? We try to weight the pattern with the same importance at 3.1. **Intuition**,  but here?
+
+
 
 ### General doubts
 
