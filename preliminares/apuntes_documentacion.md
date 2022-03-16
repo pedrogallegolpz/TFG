@@ -66,6 +66,10 @@ Relevant fragments:
 
     On the other hand, for Grad-CAM, we define $$ \omega_k^c $$ from Eqn1, and it is not True for general NN either.
 
+          if these wieghts are equal to 1. We have  that Y^c is the solution of the differential equation
+       $$y'' + y'''(M+t)=0, \ \ \ \ \ \ \ M\in \mathbb{R}$$ 
+      
+
 
 
 ### General doubts
