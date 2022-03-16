@@ -58,11 +58,13 @@ Relevant fragments:
     $$
     must to be higher for the feature map pixels that contribute to the presence of the object. The explanation is: if you detect a pattern, this pattern can contribute to the presence of the object or not. A^k_{ij}=1 on the pixels where the pattern is detected. If this pattern contribute, then the weights must to be positive (or higher than other patterns which don't contribute) because the presence of the object is labeled by 1 and no presence is labeled by 0. "So the higher number you add, the more contribute to the presence of the object"
 
-  - 3.2: **Methodology**. Why is 
+  - 3.2: **Methodology**. When we define
     $$
     \alpha_{ij}^{kc}
     $$
-    defined like this? We try to weight the pattern with the same importance at 3.1. **Intuition**,  but here?
+    "_combining Eqn1 and Eqn5_". At the definition's ending, the text says: "_the only constraint being that Y^c must be a smooth function_". BUT, I THINK THAT IT IS NOT TRUE. Eqn1 is a equation which was born in CAM with Neural Networks where their last layer before the classifier is a GAP. We only have 1 FC layer, so Eqn1 is TRUE for this case. But, is Eqn1 True for all NN? I think that no.
+
+    On the other hand, for Grad-CAM, we define $$ \omega_k^c $$ from Eqn1, and it is not True for general NN either.
 
 
 
@@ -70,3 +72,14 @@ Relevant fragments:
 
 1. For example, at GradCAM they say that we apply RELU because "we are only interested in the features that have a positive influence". What is the meaning of a negative influence? Why are positive values  accepted and negatives not?
 
+
+
+# PROGRAMMING
+We have to modulate the techniques. I've thought in two alternatives:
+
+1. Create a **`class`** that inherits from `nn.Module`. We define here the NN and create methods that return the saliency map.
+2. Create a separate **`class`** from the the **`class`** that inherits from `nn.Module`. Here, we define the methods for creating the saliency maps.
+
+**Option 1** is like: CAM techniques are NN where you can consult a image saliency map, it's like the NN has an aditional service.
+
+**Option 2** is like: you have your NN separated, and with this weights you want to know the saliency map of an image. Separating classes means separating concepts.
