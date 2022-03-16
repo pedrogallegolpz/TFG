@@ -70,7 +70,18 @@ Relevant fragments:
 
 ### General doubts
 
-1. For example, at GradCAM they say that we apply RELU because "we are only interested in the features that have a positive influence". What is the meaning of a negative influence? Why are positive values  accepted and negatives not?
+1. For example, at GradCAM they say that we apply RELU because "we are only interested in the features that have a positive influence". What is the meaning of a negative influence? Why are positive values  accepted and negatives not? **Answer**: if we accepted negative values, when we normalize for visualization, we carry the min value (which is negative) to zero, so we don't know in the saliency map what pixels contributed to the class. Two examples:
+
+        1.[-1,-2,1] --(normalization)--> [0.33,0,1]
+
+        2.[1,-1,5] --(normalization)--> [0.33,0,1]
+
+    Both examples have the same output, but in the first, attribute 1 doesn't contribute to class. However, in the second, attribute 1 does contribute to class. AND THEY HAVE THE SAME WEIGHT IN THE OUTPUT.
+    If it was with ReLu we would have:
+    
+        1.relu([-1,-2,1])=[0,0,1] --(normalization)--> [0,0,1]
+
+        2.relu([1,-1,5])=[1,0,5] --(normalization)--> [0.2,0,1]
 
 
 
