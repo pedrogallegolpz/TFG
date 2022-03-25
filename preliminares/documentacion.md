@@ -24,8 +24,10 @@ nncode-block-font-size: \scriptsize
   - Grad-CAM++ (Mejoras a GradCAM) - [https://arxiv.org/abs/1710.11063](https://arxiv.org/abs/1710.11063)
   - Smooth Grad-CAM++ (Suavizado de GradCAM) - <https://arxiv.org/abs/1908.01224> (incluye esta técnica: <https://arxiv.org/abs/1706.03825>)
 
+## Githubs ayuda
 - Repositorio de código con implementaciones de los cuatro métodos: [https://github.com/yiskw713/SmoothGradCAMplusplus](https://github.com/yiskw713/SmoothGradCAMplusplus)
 - [https://github.com/jacobgil/pytorch-grad-cam/blob/master/pytorch_grad_cam/base_cam.py](https://github.com/jacobgil/pytorch-grad-cam/blob/master/pytorch_grad_cam/base_cam.py)
+- https://github.com/1Konny/gradcam_plus_plus-pytorch/blob/master/gradcam.py
 
 ## Bases de datos
 - Segmentación de lesiones:

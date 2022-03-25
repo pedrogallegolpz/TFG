@@ -88,13 +88,3 @@ Relevant fragments:
         2.relu([1,-1,5])=[1,0,5] --(normalization)--> [0.2,0,1]
 
 
-
-# PROGRAMMING
-We have to modulate the techniques. I've thought in two alternatives:
-
-1. Create a **`class`** that inherits from `nn.Module`. We define here the NN and create methods that return the saliency map.
-2. Create a separate **`class`** from the the **`class`** that inherits from `nn.Module`. Here, we define the methods for creating the saliency maps.
-
-**Option 1** is like: CAM techniques are NN where you can consult a image saliency map, it's like the NN has an aditional service.
-
-**Option 2** is like: you have your NN separated, and with this weights you want to know the saliency map of an image. Separating classes means separating concepts.
