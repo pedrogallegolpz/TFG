@@ -250,26 +250,20 @@ class GradCAMpp_model(nn.Module, CAM_abstract):
     
     def get_subweights(self, activations=None, gradients=None):
         assert(activations!=None and activations!=None)
+        """
         # Numerator
         numerator = gradients.pow(2)
-
-        print(activations.shape)
-        print("activations.mean(axis=[1,2])",activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7).shape)
-        print(gradients.pow(3).shape)
+        
         # Denominator
         ag = activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7) * gradients.pow(3)
 
-        print("ag.view..",ag.shape)
-        print("ag.view..",ag.view(gradients.shape[0], -1).shape)
-        print("ag.view..",ag.view(gradients.shape[0], -1).sum(-1, keepdim=True).shape)
-        print("ag.view..",ag.view(gradients.shape[0], -1).sum(-1, keepdim=True).view(gradients.shape[0], 1, 1).shape)
-        
         denominator = 2 * gradients.pow(2) 
         denominator += ag #ag.view(gradients.shape[0], -1).sum(-1, keepdim=True).view(gradients.shape[0], 1, 1)
         denominator = torch.where(denominator != 0.0, denominator, torch.ones_like(denominator))
         
         # Alpha
         alpha = numerator / denominator        
+        """
         
         alpha = torch.ones_like(gradients)/(2.*torch.ones_like(gradients)+activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7) * gradients)
         

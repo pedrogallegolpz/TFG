@@ -1,46 +1,99 @@
-from torch.nn.modules.pooling import AdaptiveAvgPool2d
 import torch
-from torch import nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, models, transforms
-from torchvision.transforms import ToTensor, Lambda
-import torchvision.models as models
-import torchvision
-
 import torch.optim as optim
-from torch.optim import lr_scheduler
-
-from sklearn.metrics import accuracy_score
-
-
-import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
-
-import numpy as np
-
-import os
-
+import torchvision.models as models
+from torchvision import datasets, transforms
 import time
-import os
 import copy
-import math
 
-import cv2
-
-import seaborn as sns
-
-import abc  # For implementing abstract methods
-
-import CAM.cam
-from utils import train_model
+import os
 import json
 import math
-from torchvision.transforms import Resize
-# Reset CUDA cache
-torch.cuda.empty_cache()
+import numpy as np
 
-path_guardado_modelos = 'modelos/'
-os.makedirs(path_guardado_modelos, exist_ok=True)
+
+from torch.optim import lr_scheduler
+
+import CAM.cam
+
+############################################################################
+# ENTRENAMIENTO
+############################################################################
+def train_model(model, dic_best_values, dataloaders, dataset_sizes,criterion, optimizer, scheduler, num_epochs=2, device='cuda'):
+    since = time.time()
+
+    # Saving actual weights as best weights
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_loss = dic_best_values['loss']
+    best_acc = dic_best_values['acc']
+
+    for epoch in range(num_epochs):
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            # Iterate over data.
+            for i, (inputs, labels) in enumerate(dataloaders[phase]):
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                # zero the parameter gradients
+                optimizer.zero_grad()
+
+                if i % 200 == 199:
+                    print('[%d, %d] loss: %.3f' %(epoch + 1, i, running_loss / (i * inputs.size(0))))
+
+                # forward
+                # track history if only in train
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    loss = criterion(outputs, labels)
+
+                    # backward + optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                    # statistics
+                    running_loss += loss.item() * inputs.size(0)
+                    running_corrects += torch.sum(preds == labels.data)
+
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+
+            if phase == 'train':
+                scheduler.step()
+            elif phase == 'val' and epoch_loss < best_loss:
+                # deep copy the model
+                print('New best model found!')
+                print(f'New record loss: {epoch_loss}, previous record loss: {best_loss}')
+                best_loss = epoch_loss
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+
+            print()
+
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:.4f} Best val loss: {:.4f}'.format(best_acc, best_loss))
+
+    # load best model weights
+    model.load_state_dict(best_model_wts)
+
+    return model, best_loss, best_acc
+
+
+
 
 def get_data_transforms():
     # Just normalization for validation
@@ -101,17 +154,11 @@ def load_data(path, batch_size=8, split_size=0.2):# Data augmentation and normal
                                                          sampler=valid_sampler,
                                                          num_workers=2),
                     "test": torch.utils.data.DataLoader(image_datasets["test"], 
-                                                         batch_size=batch_size,
+                                                         batch_size=1,
                                                          shuffle=True,
                                                          num_workers=2)      
                     }
-    
-    
-    # Test
-    dataset_test = datasets.ImageFolder(os.path.join(data_dir, 'test'), data_transforms['test'])
-    dataloader_test = torch.utils.data.DataLoader(dataset_test, batch_size=1, 
-                                                  shuffle=True, num_workers=1)
-    
+
     assert(image_datasets['train'].classes==image_datasets['test'].classes)
     
     class_names = image_datasets['train'].classes
@@ -119,69 +166,184 @@ def load_data(path, batch_size=8, split_size=0.2):# Data augmentation and normal
     print(f'Train image size: {dataset_sizes["train"]}')
     print(f'Validation image size: {dataset_sizes["val"]}')
     print(f'Test image size: {dataset_sizes["test"]}')
+    print('Dataset loaded.\n')
     
-    return dataloaders, dataset_sizes, dataloader_test
+    return dataloaders, dataset_sizes
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print('DEVICE: ', device)
-dataloaders, dataset_sizes, dataloader_test = load_data(r'..\..\SICAPv1\299_patch_impar')
-
-model_vgg = models.vgg16(pretrained=True)
-
-models = {
-            'cam': {
-                        'model':CAM.cam.CAM_model(model_vgg, D_out=2),
-                        'best_values': {'loss': math.inf, 'acc':0.}
-                    },
-            'gradcam':{
-                        'model':CAM.cam.GradCAM_model(model_vgg, D_out=2),
-                        'best_values': {'loss': math.inf, 'acc':0.}
-                    },
-            'gradcampp':{
-                        'model':CAM.cam.GradCAMpp_model(model_vgg, D_out=2),
-                        'best_values': {'loss': math.inf, 'acc':0.}
-                    },
-            'smoothgradcampp':{
-                        'model':CAM.cam.SmoothGradCAMpp_model(model_vgg, D_out=2),
-                        'best_values': {'loss': math.inf, 'acc':0.}
-                    },
-}
-
-
-for name in models.keys():
-    print('\n', name.upper())
+def load_model(path_modelos, name, device, original_model=None):
+    name = name.lower()
+    assert(name=='cam' or name=='gradcam' or name=='gradcampp' or name=='smoothgradcampp')
+    
+    model = {}
     # Load model
     try:
-        models[f'{name}']['model'] = torch.load(path_guardado_modelos+f"model_{name}.pth").to(device)
-        with open(path_guardado_modelos+f'dic_best_values_model_{name}.json') as f_dic:
-             models[f'{name}']['best_values'] = json.load(f_dic)
+        model['model'] = torch.load(path_modelos+f"model_{name}.pth").to(device)
+        with open(path_modelos+f'dic_best_values_model_{name}.json') as f_dic:
+             model['best_values'] = json.load(f_dic)
         print(f"model_{name} loaded")
     except:
-        print(f"model_{name} not found")
-    
-    # Cogemos el optimizador y el criterio de aprendizaje
-    optimizer = optim.SGD(models[f'{name}']['model'].parameters(), lr=0.001, momentum=0.9)
-    criterion = torch.nn.CrossEntropyLoss() 
+        if name=='cam':
+            model['model'] = CAM.cam.CAM_model(original_model, D_out=2)
+        elif name =='gradcam':
+            model['model'] = CAM.cam.GradCAM_model(original_model, D_out=2)
+        elif name =='gradcampp':
+            model['model'] = CAM.cam.GradCAMpp_model(original_model, D_out=2)
+        elif name =='smoothgradcampp':
+            model['model'] = CAM.cam.SmoothGradCAMpp_model(original_model, D_out=2)
+        else:
+            print("\nError creating a new model. Maybe original_model==None\n")            
+            raise
+          
+        model['best_values'] = {'loss': math.inf, 'acc':0.}
+        print(f"model_{name} not found") 
+        
+    return model
 
-    # Decay LR by a factor of 0.1 every 7 epochs
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
-    # Entrenamos
-    model_gradcam, best_val_loss, best_val_acc = train_model(models[f'{name}']['model'],
-                                                          models[f'{name}']['best_values'],
-                                                          dataloaders, 
-                                                          dataset_sizes,
-                                                          criterion,
-                                                          optimizer,
-                                                          exp_lr_scheduler,
-                                                          num_epochs = 0)
 
-    # Guardamos el mejor modelo del entrenamiento
-    torch.save(models[f'{name}']['model'], path_guardado_modelos+f"model_{name}.pth")
+def train_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smoothgradcampp=True, epochs=1, learning_rate=0.001, momentum=0.9):
+    """
+    Parameters
+    ----------
+    path_modelos : str
+        path where the models will be stored.
+    cam : bool, optional
+        If True, this model will be trained. The default is True.
+    gradcam : bool, optional
+        If True, this model will be trained. The default is True.
+    gradcampp : bool, optional
+        If True, this model will be trained. The default is True.
+    smoothgradcampp : bool, optional
+        If True, this model will be trained. The default is True.
+    epochs : int, optional
+        num of epochs for training. The default is 1.
+    learning_rate : float, optional
+        hyperparameter. The default is 0.001.
+    momentum : float, optional
+        hyperparameter. The default is 0.9.
+
+
+    DESCRIPTION
+    ------------
+        Run the train phase for CAM models. It's enough to call this function
+        as:
+            - utils.train_cam_models('.')
+            - utils.train_cam_models('models/')
+
+    """
+    if path_modelos[-1] != '/':
+        path_modelos += '/'
+        
+    # List of technics to train
+    technics = {'cam': cam, 'gradcam': gradcam, 'gradcampp':gradcampp, 'smoothgradcampp':smoothgradcampp}
+
+    os.makedirs(path_modelos, exist_ok=True)
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print('DEVICE: ', device)
     
-    models[f'{name}']['best_values'] = {'loss': best_val_loss, 'acc': best_val_acc.item()}
-    with open(path_guardado_modelos+f'dic_best_values_model_{name}.json','w') as f_dic:
-        json.dump(models[f'{name}']['best_values'], f_dic)
+    # Read datasets
+    dataloaders, dataset_sizes = load_data(r'..\..\SICAPv1\299_patch_impar')
     
-    print(f'model_{name} guardado')
+    model_vgg = models.vgg16(pretrained=True)
+    
+    models_dic = {}
+    for name in technics.keys():
+        if not technics[f'{name}']:
+            continue
+        
+        print('\n', name.upper())
+        
+        # Load model
+        models_dic[f'{name}'] = load_model(path_modelos, name, device, original_model=model_vgg)
+        
+        # Cogemos el optimizador y el criterio de aprendizaje
+        optimizer = optim.SGD(models_dic[f'{name}']['model'].parameters(), lr=learning_rate, momentum=momentum)
+        criterion = torch.nn.CrossEntropyLoss() 
+    
+        # Decay LR by a factor of 0.1 every 7 epochs
+        exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+    
+        # Entrenamos
+        model_gradcam, best_val_loss, best_val_acc = train_model(models_dic[f'{name}']['model'],
+                                                              models_dic[f'{name}']['best_values'],
+                                                              dataloaders, 
+                                                              dataset_sizes,
+                                                              criterion,
+                                                              optimizer,
+                                                              exp_lr_scheduler,
+                                                              num_epochs = epochs)
+    
+        # Guardamos el mejor modelo del entrenamiento
+        torch.save(models_dic[f'{name}']['model'], path_modelos+f"model_{name}.pth")
+        
+        
+        
+
+        
+        models_dic[f'{name}']['best_values'] = {'loss': best_val_loss, 'acc': best_val_acc.item()}
+        with open(path_modelos+f'dic_best_values_model_{name}.json','w') as f_dic:
+            json.dump(models_dic[f'{name}']['best_values'], f_dic)
+        
+        print(f'model_{name} guardado')
+        
+        
+############################################################################
+# TEST
+############################################################################
+def test_model(model, dataloader_test, test_size, criterion, device='cuda'):
+    since = time.time()
+
+    model.eval()   # Set model to evaluate mode
+
+    running_loss = 0.0
+    running_corrects = 0
+
+    # Iterate over data.
+    for i, (inputs, labels) in enumerate(dataloader_test):
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        if i % 200 == 199:
+            print('[%d] loss: %.3f' %( i, running_loss / (i * inputs.size(0))))
+
+        # forward
+        outputs = model(inputs)
+        _, preds = torch.max(outputs, 1)
+        loss = criterion(outputs, labels)
+
+        # statistics
+        running_loss += loss.item() * inputs.size(0)
+        running_corrects += torch.sum(preds == labels.data)
+
+    final_loss = running_loss / test_size
+    final_acc = running_corrects.double() / test_size
+    print('TEST\n','Loss: {:.4f} Acc: {:.4f}'.format(final_loss, final_acc))
+
+    
+    time_elapsed = time.time() - since
+    print('Testing complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+
+    return final_loss, final_acc
+
+
+def test_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smoothgradcampp=True):
+
+    # List of technics to train
+    technics = {'cam': cam, 'gradcam': gradcam, 'gradcampp':gradcampp, 'smoothgradcampp':smoothgradcampp}
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print('DEVICE: ', device)
+
+    # Read datasets
+    dataloaders, dataset_sizes = load_data(r'..\..\SICAPv1\299_patch_impar')
+
+    models_dic = {}
+    for name in technics.keys():
+        # Load model
+        models_dic[f'{name}'] = load_model(path_modelos, name, device)
+
+        criterion = torch.nn.CrossEntropyLoss() 
+
+        test_model(models_dic[f'{name}']['model'] , dataloaders['test'], dataset_sizes['test'], criterion, device)

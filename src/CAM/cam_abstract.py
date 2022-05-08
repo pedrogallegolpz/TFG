@@ -149,7 +149,6 @@ class CAM_abstract:
         
         # Visualización
         for hm in heatmaps_pre: 
-            print(f'MIN: {hm.min()}, MAX: {hm.max()}')
             heatmaps_new.append(hm.cpu().detach().numpy())
 
         res=[]
@@ -158,9 +157,9 @@ class CAM_abstract:
 
         
         # Taking the class predicted
-        print(f"Y: {soft(y_pred)}")
-        y_pred_mod_new = torch.argmax(soft(y_prob),axis=0)
+        y_pred_mod_new = torch.argmax(y_prob, dim=1)
         dic_prob = {"sano": y_prob[0][0], "cancer": y_prob[0][1] }
+        name_classes = list(dic_prob.keys())
         
         cam_pred_name = "sano" if y_pred_mod_new[0]==0 else "cancer"
         cam_act_name = "sano" if y==0 else "cancer"
@@ -173,25 +172,35 @@ class CAM_abstract:
         #   HACEMOS PLOT
         plot_hm = np.zeros(self.n_classes)
         for i in range(self.n_classes):
-            if class_plot==-2 or (class_plot==-1 and i==y_pred_mod_new) or (class_plot==i):
+            if class_plot==-2 or (class_plot==-1 and i==int(y_pred_mod_new)) or (class_plot==i):
                 plot_hm[i]=1
         
                     
-        n_cols=int(plot_hm.sum())
-        fig, axes = plt.subplots(nrows=1, ncols=n_cols)
-        curr_axe = 0
-        for i in range(n_cols):
+        n_cols=int(plot_hm.sum())+1
+        fig, axes = plt.subplots(nrows=1,
+                                 ncols=n_cols,
+                                 gridspec_kw={'width_ratios':np.ones(n_cols)})
+        
+        # Plot de la imagen original
+        im = axes[0].imshow(x_plot)
+        
+        axes[0].title.set_text("----------- IMAGEN ORIGINAL -----------")
+        
+        curr_axe_idx = 0
+        for i in range(self.n_classes):
             if plot_hm[i]==1:
-                im = axes[curr_axe].imshow(res[i], cmap=plt.get_cmap('turbo'))#cmap_good_vs_evil)
-                axes[curr_axe].imshow(x_plot, alpha=0.5)
-                if i==0:
-                    axes[curr_axe].title.set_text("----------- HEATMAP TEJIDO SANO -----------")
-                else:
-                    axes[curr_axe].title.set_text("----------- HEATMAP TEJIDO CANCERÍGENO -----------")
-
-                cbar = fig.colorbar(im, ax=axes[curr_axe], ticks=[-1, 0, 1])
-                cbar.ax.set_yticklabels(['cáncer', 'background','sano'])  # vertically oriented colorbar
+                try:
+                    curr_axe = axes[curr_axe_idx+1]
+                except:
+                    curr_axe = axes
                 
+                im = curr_axe.imshow(res[i], cmap=plt.get_cmap('turbo'), aspect='auto')#cmap_good_vs_evil)
+                curr_axe.imshow(x_plot, alpha=0.5)
+                if i==0:
+                    curr_axe.title.set_text("----------- HEATMAP T. SANO -----------")
+                else:
+                    curr_axe.title.set_text("----------- HEATMAP T. CANCERÍGENO -----------")
+
                 # Update current axe
-                curr_axe +=1
+                curr_axe_idx +=1
         plt.show()
