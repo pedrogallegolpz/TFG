@@ -51,233 +51,17 @@ class CAM_model(nn.Module, CAM_abstract):
         
         return x_mod
 
-    def get_weights(self, activations=None, device='cuda'):
-        # With default parameters
-        flat = nn.Flatten()
-
-        # Calculate output
-        x_mod = activations
-        x_mod = self.avgPool_CAM(x_mod) 
-        x_mod = flat(x_mod) # flatten
-        y = self.fc(x_mod)
-
-        return next(iter(self.fc.parameters())), y
+    def get_weights(self, technic=None, activations=None, device='cuda'):
+        return next(iter(self.fc.parameters()))
         
-    def get_subweights(self, activations=None, grad=None):
+    def get_subweights(self, technic=None, activations=None, grad=None):
         return None
-        
-        
-        
-class GradCAM_model(nn.Module, CAM_abstract):
-    name = "GradCAM"
-    
-    def __init__(self, originalModel, D_out):
-        super(GradCAM_model, self).__init__()
-        
-        # Quitamos la FC
-        fc_removed, in_features_list = remove_modules_type(originalModel, [nn.Linear])
-        self.list_modules = nn.ModuleList(fc_removed)
-               
-        # Definimos las FC nuevas con salida D_out
-        in_features = in_features_list[-1]
-        
-        exp = int(0.5+math.log(in_features, 2)/2)
-
-        in_out = [in_features, 2**exp, 2**exp, D_out]
-        
-        layers = []
-        for i in range(len(in_out)-1):
-            in_f = in_out[i]
-            out_f = in_out[i+1]
-            layers.append(nn.Linear(in_features=in_f, out_features=out_f, bias=True))
-            layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(p=0.5, inplace=False))
-          
-        self.fc = nn.Sequential(*layers[:-2])
-        
-        self.n_classes = D_out
-        
-    def forward(self, x):
-        # utils
-        flat = nn.Flatten()
-
-        # forward
-        x_mod = self.get_activations(x)
-        x_mod = flat(x_mod) # flatten
-        x_mod = self.fc(x_mod)
-
-        return x_mod
-    
-    def get_activations(self, x):
-        x_mod = x
-        for mod in self.list_modules:
-            x_mod = mod(x_mod)
-        
-        return x_mod
-
-    def get_weights(self, activations=None, device='cuda'):
-        assert(activations!=None)
-        # With default parameters
-        flat = nn.Flatten()
-        
-        # Enables this Tensor to have their grad populated during backward().
-        activations.retain_grad() 
-        
-        weights = torch.tensor([]).to(device)
-        for class_i in range(self.n_classes):
-            # Set gradients to zero
-            activations.grad = torch.zeros_like(activations)
-            
-            # forward
-            y_pred = self.fc(flat(activations))
-            torch.autograd.backward(y_pred[0][class_i], retain_graph=True)
-
-            # Getting the parameters as the mean of the gradients
-            weights = torch.cat((weights, torch.mean(activations.grad[0],(1,2))[None,:]))
-            
-        # Calculate output
-        x_mod = activations
-        x_mod = flat(x_mod) # flatten
-        y = self.fc(x_mod)
-            
-        return weights, y
-
-    def get_subweights(self, activations=None, grad=None):
-        return None
-   
-        
-        
-        
-class GradCAMpp_model(nn.Module, CAM_abstract):
-    name = "GradCAM++"
-    
-    def __init__(self, originalModel, D_out):
-        super(GradCAMpp_model, self).__init__()
-        
-        # Drop FC
-        fc_removed, in_features_list = remove_modules_type(originalModel, [nn.Linear])
-        self.list_modules = nn.ModuleList(fc_removed)
-               
-        # Define new FC with out_features=D_out
-        in_features = in_features_list[-1]
-        
-        exp = int(0.5+math.log(in_features, 2)/2)
-
-        in_out = [in_features, 2**exp, 2**exp, D_out]
-        
-        layers = []
-        for i in range(len(in_out)-1):
-            in_f = in_out[i]
-            out_f = in_out[i+1]
-            layers.append(nn.Linear(in_features=in_f, out_features=out_f, bias=True))
-            layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(p=0.5, inplace=False))
-          
-        self.fc = nn.Sequential(*layers[:-2])
-                
-        self.n_classes = D_out
-        
-    def forward(self, x):
-        # utils
-        flat = nn.Flatten()
-
-        # forward
-        x_mod = self.get_activations(x)
-        x_mod = flat(x_mod) # flatten
-        x_mod = self.fc(x_mod)
-        
-        return x_mod
-
-    
-    def get_activations(self, x):
-        x_mod = x
-        for mod in self.list_modules:
-            x_mod = mod(x_mod)
-        
-        return x_mod
-
-    def get_weights(self, activations=None, device='cuda'):
-        assert(activations!=None)
-        # With default parameters
-        flat = nn.Flatten()
-
-        
-        # utils
-        relu = nn.ReLU()
-        
-        # Enables this Tensor to have their grad populated during backward().
-        activations.retain_grad() 
-        
-        weights = torch.tensor([]).to(device)
-        for class_i in range(self.n_classes):
-            # Set gradients to zero
-            activations.grad = torch.zeros_like(activations)
-            
-            # forward
-            s_c = self.fc(flat(activations))
-            torch.autograd.backward(s_c[0][class_i], retain_graph=True)
-            
-            # get the dy/dA=exp(s)*ds/dA
-            dydA = torch.exp(s_c[0][class_i])*activations.grad[0]
-
-            # Getting the parameters as a weighted sum of the gradients
-            subweights = self.get_subweights(activations[0], activations.grad[0])
-            
-            relu_dydA = relu(dydA)
-            """
-            # Normalizamos los alpha            
-            subweights_thresholding = torch.where(relu_dydA>0, subweights, relu_dydA) # donde relu_dydA es cero, esto será cero
-            
-            subweights_normalization_constant = subweights_thresholding.sum(axis=(1,2))
-            subweights_normalization_constant_processed = torch.where(subweights_normalization_constant != 0.0, 
-                                                                      subweights_normalization_constant, 
-                                                                      torch.ones_like(subweights_normalization_constant))
-            
-            subweights /= subweights_normalization_constant_processed[:,None,None].expand(subweights.shape)
-            """
-            new_weight = (subweights*relu_dydA).sum(axis=(1,2))
-            
-            weights = torch.cat((weights,new_weight[None,:]))
-           
-        
-        # Calculate output
-        x_mod = activations
-        x_mod = flat(x_mod) # flatten
-        y = self.fc(x_mod)
-            
-        return weights, y
-
-    
-    def get_subweights(self, activations=None, gradients=None):
-        assert(activations!=None and activations!=None)
-        """
-        # Numerator
-        numerator = gradients.pow(2)
-        
-        # Denominator
-        ag = activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7) * gradients.pow(3)
-
-        denominator = 2 * gradients.pow(2) 
-        denominator += ag #ag.view(gradients.shape[0], -1).sum(-1, keepdim=True).view(gradients.shape[0], 1, 1)
-        denominator = torch.where(denominator != 0.0, denominator, torch.ones_like(denominator))
-        
-        # Alpha
-        alpha = numerator / denominator        
-        """
-        
-        alpha = torch.ones_like(gradients)/(2.*torch.ones_like(gradients)+activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7) * gradients)
-        
-        return alpha
-    
-    
-    
-    
        
-class SmoothGradCAMpp_model(nn.Module, CAM_abstract):
-    name = "SmoothGradCAM++"
-    
+class CAM(nn.Module, CAM_abstract):   
+    name = ""
+
     def __init__(self, originalModel, D_out):
-        super(SmoothGradCAMpp_model, self).__init__()
+        super(CAM, self).__init__()
         
         # Drop FC
         fc_removed, in_features_list = remove_modules_type(originalModel, [nn.Linear])
@@ -322,7 +106,7 @@ class SmoothGradCAMpp_model(nn.Module, CAM_abstract):
         
         return x_mod
 
-    def get_weights(self, activations=None, device='cuda'):
+    def get_weights(self, technic='gradcam', activations=None, device='cuda'):
         assert(activations!=None)        
         # With default parameters
         flat = nn.Flatten()
@@ -372,37 +156,51 @@ class SmoothGradCAMpp_model(nn.Module, CAM_abstract):
             exp_s = torch.exp(mean_noisy_s_c[class_i])
             dsdA = gradients_with_noise[class_i].mean(axis=0)
             dydA = exp_s*dsdA
-
+            relu_dydA = relu(dydA)
             # Getting the parameters as a weighted sum of the noisy gradients
             #subweights = self.get_subweights(activations[0], gradients_with_noise[class_i]) #
-            subweights = self.get_subweights( activations.mean(axis=0), gradients_with_noise[class_i]) 
+            subweights = self.get_subweights(technic = technic, 
+                                             activations = activations.mean(axis=0), 
+                                             gradients = gradients_with_noise[class_i]) 
 
-            new_weight = (subweights*relu(dydA)).sum(axis=(1,2))
+
+            if technic!='gradcam':
+                # normalizamos
+                subweights_thresholding = torch.where(relu_dydA>0, subweights, relu_dydA) # donde relu_dydA es cero, esto será cero
+                
+                subweights_normalization_constant = subweights_thresholding.sum(axis=(1,2))
+                subweights_normalization_constant_processed = torch.where(subweights_normalization_constant != 0.0, 
+                                                                          subweights_normalization_constant, 
+                                                                          torch.ones_like(subweights_normalization_constant))
+                
+                subweights /= subweights_normalization_constant_processed[:,None,None].expand(subweights.shape)
+
+            new_weight = (subweights*relu_dydA).sum(axis=(1,2))
 
             weights = torch.cat((weights,new_weight[None,:]))
 
-        # Calculate output
-        x_mod = activations
-        x_mod = flat(x_mod) # flatten
-        y = self.fc(x_mod)
-        
-        return weights, y.mean(axis=0)[None,:]
+        return weights
 
     
-    def get_subweights(self, activations=None, gradients=None):
+    def get_subweights(self, technic='gradcam', activations=None, gradients=None):
         assert(activations!=None and activations!=None)
         
-        # Numerator 
-        numerator = gradients.pow(2).mean(axis=0)
-
-        # Denominator
-        ag = activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7) * gradients.pow(3).mean(axis=0)
-
-        denominator = 2 * gradients.pow(2).mean(axis=0) 
-        denominator += ag #ag.view(gradients.shape[1], -1).sum(-1, keepdim=True).view(gradients.shape[1], 1, 1)
-        denominator = torch.where(denominator != 0.0, denominator, torch.ones_like(denominator))
-        
-        # Alpha
-        alpha = numerator / denominator
+        if technic!='gradcam':
+            # Numerator 
+            numerator = gradients.pow(2).mean(axis=0)
+    
+            # Denominator
+            ag = activations.sum(axis=[1,2])[:,None,None].expand(-1,7,7) * gradients.pow(3).mean(axis=0)
+    
+            denominator = 2 * gradients.pow(2).mean(axis=0) 
+            denominator += ag #ag.view(gradients.shape[1], -1).sum(-1, keepdim=True).view(gradients.shape[1], 1, 1)
+            denominator = torch.where(denominator != 0.0, denominator, torch.ones_like(denominator))
+            
+            # Alpha
+            alpha = numerator / denominator
+            
+            
+        else:
+            alpha = 1./torch.ones_like(activations).sum() * torch.ones_like(activations)
                 
         return alpha

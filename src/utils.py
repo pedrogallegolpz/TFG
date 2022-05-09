@@ -14,6 +14,7 @@ import numpy as np
 from torch.optim import lr_scheduler
 
 import CAM.cam
+from dataset import ImageFolder_and_MaskFolder
 
 ############################################################################
 # ENTRENAMIENTO
@@ -41,7 +42,7 @@ def train_model(model, dic_best_values, dataloaders, dataset_sizes,criterion, op
             running_corrects = 0
 
             # Iterate over data.
-            for i, (inputs, labels) in enumerate(dataloaders[phase]):
+            for i, (inputs, _, labels) in enumerate(dataloaders[phase]):
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
@@ -123,10 +124,11 @@ def load_data(path, batch_size=8, split_size=0.2):# Data augmentation and normal
     data_transforms = get_data_transforms()
     
     data_dir = path
-    image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),
-                                              data_transforms[x])
+    image_datasets = {x: ImageFolder_and_MaskFolder(os.path.join(data_dir, x),
+                                                             data_transforms[x]
+                                                    )
                       for x in ['train', 'test']}
-    #print(image_datasets["train"].imgs)
+    #print(image_datasets["test"].imgs)
 
     dataset_sizes = {
                         "train": int(len(image_datasets["train"])-np.floor(len(image_datasets["train"])*split_size)),
@@ -173,8 +175,6 @@ def load_data(path, batch_size=8, split_size=0.2):# Data augmentation and normal
 
 def load_model(path_modelos, name, device, original_model=None):
     name = name.lower()
-    assert(name=='cam' or name=='gradcam' or name=='gradcampp' or name=='smoothgradcampp')
-    
     model = {}
     # Load model
     try:
@@ -185,24 +185,20 @@ def load_model(path_modelos, name, device, original_model=None):
     except:
         if name=='cam':
             model['model'] = CAM.cam.CAM_model(original_model, D_out=2)
-        elif name =='gradcam':
-            model['model'] = CAM.cam.GradCAM_model(original_model, D_out=2)
-        elif name =='gradcampp':
-            model['model'] = CAM.cam.GradCAMpp_model(original_model, D_out=2)
-        elif name =='smoothgradcampp':
-            model['model'] = CAM.cam.SmoothGradCAMpp_model(original_model, D_out=2)
         else:
-            print("\nError creating a new model. Maybe original_model==None\n")            
-            raise
-          
+            model['model'] = CAM.cam.CAM(original_model, D_out=2)
+       
         model['best_values'] = {'loss': math.inf, 'acc':0.}
         print(f"model_{name} not found") 
         
+        
+    model['model'] = model['model'].to(device)
+    
     return model
 
 
 
-def train_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smoothgradcampp=True, epochs=1, learning_rate=0.001, momentum=0.9):
+def train_cam_models(path_modelos, cam=True, cam_pro=True, epochs=1, learning_rate=0.001, momentum=0.9):
     """
     Parameters
     ----------
@@ -210,11 +206,7 @@ def train_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smoot
         path where the models will be stored.
     cam : bool, optional
         If True, this model will be trained. The default is True.
-    gradcam : bool, optional
-        If True, this model will be trained. The default is True.
-    gradcampp : bool, optional
-        If True, this model will be trained. The default is True.
-    smoothgradcampp : bool, optional
+    cam_pro : bool, optional
         If True, this model will be trained. The default is True.
     epochs : int, optional
         num of epochs for training. The default is 1.
@@ -236,7 +228,7 @@ def train_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smoot
         path_modelos += '/'
         
     # List of technics to train
-    technics = {'cam': cam, 'gradcam': gradcam, 'gradcampp':gradcampp, 'smoothgradcampp':smoothgradcampp}
+    technics = {'cam': cam, 'cam_pro': cam_pro}
 
     os.makedirs(path_modelos, exist_ok=True)
 
@@ -301,7 +293,7 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda'):
     running_corrects = 0
 
     # Iterate over data.
-    for i, (inputs, labels) in enumerate(dataloader_test):
+    for i, (inputs, _, labels) in enumerate(dataloader_test):
         inputs = inputs.to(device)
         labels = labels.to(device)
 
@@ -328,10 +320,10 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda'):
     return final_loss, final_acc
 
 
-def test_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smoothgradcampp=True):
+def test_cam_models(path_modelos, cam=True, cam_pro=True):
 
     # List of technics to train
-    technics = {'cam': cam, 'gradcam': gradcam, 'gradcampp':gradcampp, 'smoothgradcampp':smoothgradcampp}
+    technics = {'cam': cam, 'cam_pro': cam_pro}
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print('DEVICE: ', device)
@@ -341,6 +333,9 @@ def test_cam_models(path_modelos, cam=True, gradcam=True, gradcampp=True, smooth
 
     models_dic = {}
     for name in technics.keys():
+        if not technics[f'{name}']:
+            continue
+        
         # Load model
         models_dic[f'{name}'] = load_model(path_modelos, name, device)
 

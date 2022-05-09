@@ -36,10 +36,16 @@ class CAM_abstract:
         return
     
     @abc.abstractmethod
-    def get_weights(self, activations=None, device='cuda'):
+    def get_weights(self,technic, activations=None, device='cuda'):
         """
         Parameters:
         -----------
+            -technic: str
+                for CAM is unnecessary. For CAM_pro indicates the technic
+                to use for getting weights in order to plot a saliency map.
+                the available values are: 
+                        ['gradcam','gradcampp','smoothgradcampp']
+                        
             -activations: tensor
                 the last values before passing
                 through the first fully connected layer
@@ -56,10 +62,16 @@ class CAM_abstract:
         return
     
     @abc.abstractmethod
-    def get_subweights(self, activations=None, grad=None):
+    def get_subweights(self, technic, activations=None, grad=None):
         """
         Parameters:
         -----------
+            -technic: str
+                for CAM is unnecessary. For CAM_pro indicates the technic
+                to use for getting weights in order to plot a saliency map.
+                the available values are: 
+                        ['gradcam','gradcampp','smoothgradcampp']
+            
             -activations: tensor
                 the last values before passing through
                 the first fully connected layer
@@ -76,11 +88,11 @@ class CAM_abstract:
         return
     
 
-    def saliency_map(self, x, n_noise=1, std=0, device='cuda'):
+    def saliency_map(self, x, technic='gradcam', n_noise=1, std=0, device='cuda'):
         # Evaluate mode
         self.eval()
 
-        if n_noise>1:
+        if n_noise>1 and technic=='smoothgradcampp':
             # Calculate (if it's the case) the noisy inputs
             std_tensor = torch.ones_like(x) * std
             input_with_noise = torch.tensor([]).to(device)
@@ -98,7 +110,7 @@ class CAM_abstract:
         activations = self.get_activations(x)
         
         # Getting the parameters from the first layer of self.fc (the unique layer)
-        parameters, y = self.get_weights(activations, device=device)
+        parameters = self.get_weights(technic, activations, device=device)
         
         # Getting the tensor with three dimensions (if there are noise, we get the average of the noisy activations)
         activations = activations.mean(axis=0)
@@ -113,14 +125,16 @@ class CAM_abstract:
    
             heatmaps = torch.cat((heatmaps, activations_final[None,:,:]))
 
-        return heatmaps, y 
+        return heatmaps
     
-    def plot_saliency_map(self, x, y, class_plot=-1, n_noise=1, std=0, device='cuda'):
+    def plot_saliency_map(self, x, y, technic, mask=None, class_plot=-1, n_noise=10, std=0.3, device='cuda'):
         """
         Parameters:
         -----------
             - x: input 
 
+            - technic: Class Activation Mapping technic to use
+            
             - y: {x} actual class
 
             - class_plot:
@@ -138,15 +152,20 @@ class CAM_abstract:
         var = [0.229, 0.224, 0.225]
         x_plot=((torch.reshape(x.cpu(), (3,224,224)).permute(1,2,0).numpy())*var)+mean
         
+        if mask is not None:
+            mask_plot = torch.reshape(mask.cpu(), (3,224,224)).permute(1,2,0).numpy()
+        
         # Getting the heatmaps
-        heatmaps_pre, y_pred = self.saliency_map(x, n_noise=n_noise, std=std, device=device)
-        y_prob = soft(y_pred)
+        heatmaps_pre = self.saliency_map(x, technic=technic, n_noise=n_noise, std=std, device=device)
+        y_prob = soft(self(x))
     
         heatmaps_new = list()
         
-        # Dividimos por el mayor absoluto para tener mapas relativos
-        heatmaps_pre = heatmaps_pre / torch.max(torch.abs(heatmaps_pre))
-        
+        # Dividimos por el mayor absoluto para tener mapas 
+        for i in range(len(heatmaps_pre)):
+            maximo = heatmaps_pre[i].max()
+            heatmaps_pre[i] /= maximo
+
         # Visualización
         for hm in heatmaps_pre: 
             heatmaps_new.append(hm.cpu().detach().numpy())
@@ -154,17 +173,27 @@ class CAM_abstract:
         res=[]
         res.append(cv2.resize(heatmaps_new[0], dsize=(224, 224), interpolation=cv2.INTER_CUBIC))
         res.append(cv2.resize(heatmaps_new[1], dsize=(224, 224), interpolation=cv2.INTER_CUBIC))
-
+        
+        res_mask=[]
+        for i in range(len(res)):
+            aux = np.zeros_like(res[i])
+            aux[res[i]>0.25] = 1.
+            
+            res_mask.append(cv2.cvtColor(aux,cv2.COLOR_GRAY2RGB))
+        
         
         # Taking the class predicted
         y_pred_mod_new = torch.argmax(y_prob, dim=1)
         dic_prob = {"sano": y_prob[0][0], "cancer": y_prob[0][1] }
         name_classes = list(dic_prob.keys())
         
-        cam_pred_name = "sano" if y_pred_mod_new[0]==0 else "cancer"
-        cam_act_name = "sano" if y==0 else "cancer"
+        cam_pred_name = name_classes[y_pred_mod_new[0]] 
+        cam_act_name = name_classes[y] 
 
-        print('PROB {}:\n\t- SANO: {:.5f}\n\t- CANCER: {:.5f}'.format(self.name, dic_prob["sano"], dic_prob["cancer"]))
+        if self.name=='CAM':
+            technic=='CAM'
+            
+        print('PROB {}:\n\t- SANO: {:.5f}\n\t- CANCER: {:.5f}'.format(technic.upper(), dic_prob["sano"], dic_prob["cancer"]))
         print(f'(CLASS PREDICTED -- {cam_pred_name}) vs ({cam_act_name} -- ACTUAL CLASS)')
         
         
@@ -177,30 +206,55 @@ class CAM_abstract:
         
                     
         n_cols=int(plot_hm.sum())+1
-        fig, axes = plt.subplots(nrows=1,
+        n_rows=2
+        
+        fig, axes = plt.subplots(nrows=n_rows,
                                  ncols=n_cols,
                                  gridspec_kw={'width_ratios':np.ones(n_cols)})
         
         # Plot de la imagen original
-        im = axes[0].imshow(x_plot)
+        axes[0][0].title.set_text("---- IMAGEN ORIGINAL ----")
+        axes[0][0].imshow(x_plot)
         
-        axes[0].title.set_text("----------- IMAGEN ORIGINAL -----------")
-        
+        if mask is not None:
+            axes[1][0].title.set_text("---- MÁSCARA ORIGINAL ----")
+            axes[1][0].imshow(mask_plot)
+            
         curr_axe_idx = 0
         for i in range(self.n_classes):
             if plot_hm[i]==1:
-                try:
-                    curr_axe = axes[curr_axe_idx+1]
-                except:
-                    curr_axe = axes
+                mask_2 = cv2.cvtColor(mask_plot,cv2.COLOR_RGB2GRAY)
+                mask_2 -= mask_2.min()
+                mask_2 /= mask_2.max()
+                print("MAX", mask_2.max(), "MIN", mask_2.min(), "SHAPE", mask_2.shape)
+                print("MEJOR VALOR: ", (res[i]*mask_2).mean())
                 
-                im = curr_axe.imshow(res[i], cmap=plt.get_cmap('turbo'), aspect='auto')#cmap_good_vs_evil)
-                curr_axe.imshow(x_plot, alpha=0.5)
                 if i==0:
-                    curr_axe.title.set_text("----------- HEATMAP T. SANO -----------")
+                    axes[1][curr_axe_idx+1].title.set_text("---- MÁSCARA T. SANO ----")
                 else:
-                    curr_axe.title.set_text("----------- HEATMAP T. CANCERÍGENO -----------")
+                    axes[1][curr_axe_idx+1].title.set_text("---- MÁSCARA T. CANCERÍGENO ----")
+                axes[1][curr_axe_idx+1].imshow(res_mask[i])
+                
+                
+                if i==0:
+                    axes[0][curr_axe_idx+1].title.set_text("---- HEATMAP T. SANO ----")
+                else:
+                    axes[0][curr_axe_idx+1].title.set_text("---- HEATMAP T. CANCERÍGENO ----")
+                axes[0][curr_axe_idx+1].imshow(res[i], cmap=plt.get_cmap('turbo'))#cmap_good_vs_evil)
+                axes[0][curr_axe_idx+1].imshow(x_plot, alpha=0.5)
+                
+                
+                
+                
 
                 # Update current axe
                 curr_axe_idx +=1
+        
+            
+        plt.subplots_adjust(left=0.1,
+                            bottom=0.1, 
+                            right=0.9, 
+                            top=0.9, 
+                            wspace=0.4, 
+                            hspace=0.4)
         plt.show()
