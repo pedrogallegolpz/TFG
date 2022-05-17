@@ -1,10 +1,14 @@
 import math
 import torch
 from torch import nn
+
 try:
     from cam_abstract import CAM_abstract
 except:
     from CAM.cam_abstract import CAM_abstract
+
+    
+
 
 try:
     from utils_cam import remove_modules_type
@@ -139,11 +143,12 @@ class CAM(nn.Module, CAM_abstract):
                 torch.autograd.backward(s_c[0][class_i], retain_graph=True)
                 
                 gradients_with_noise[class_i] = torch.cat((gradients_with_noise[class_i], act_noise.grad)) #, act_noise.grad[0][None,:]))
-            
+                
             # Añadimos la salida s_c
             s_c_with_noise = torch.cat((s_c_with_noise, s_c_with_noise_classes[None,:]))
 
-        
+            
+            
         # Calculate the mean of the activations (axis 0)
         mean_noisy_s_c = s_c_with_noise.mean(axis=0)
         
@@ -164,6 +169,7 @@ class CAM(nn.Module, CAM_abstract):
                                              gradients = gradients_with_noise[class_i]) 
 
 
+            
             if technic!='gradcam':
                 # normalizamos
                 subweights_thresholding = torch.where(relu_dydA>0, subweights, relu_dydA) # donde relu_dydA es cero, esto será cero
@@ -176,7 +182,9 @@ class CAM(nn.Module, CAM_abstract):
                 subweights /= subweights_normalization_constant_processed[:,None,None].expand(subweights.shape)
 
             new_weight = (subweights*relu_dydA).sum(axis=(1,2))
-
+            
+            torch.cuda.empty_cache()
+            
             weights = torch.cat((weights,new_weight[None,:]))
 
         return weights

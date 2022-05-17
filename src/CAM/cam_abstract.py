@@ -6,6 +6,14 @@ from matplotlib.colors import LinearSegmentedColormap
 import torch
 from torch import nn
 
+import sys
+try:
+    from utils import iou
+except:
+    sys.path.append("../")
+    from utils import iou
+    
+    
 # Define colormap
 colors = [(1, 0, 0), (0, 0, 1),  (0, 1, 0)]  # R -> G -> B
 n_bins = [3, 6, 10, 100]  # Discretizes the interpolation into bins
@@ -105,13 +113,13 @@ class CAM_abstract:
                 input_with_noise = torch.cat((input_with_noise,x_noise))
                 
             x = input_with_noise # rename in order to reuse the next 'get_weight' function for every case
-
+            
         # We generate the activation map
         activations = self.get_activations(x)
         
         # Getting the parameters from the first layer of self.fc (the unique layer)
         parameters = self.get_weights(technic, activations, device=device)
-        
+
         # Getting the tensor with three dimensions (if there are noise, we get the average of the noisy activations)
         activations = activations.mean(axis=0)
             
@@ -121,11 +129,11 @@ class CAM_abstract:
         heatmaps=torch.tensor([]).to(device)
         for class_i in range(self.n_classes):
             # Getting the heatmaps: w_1*Act_1 + w_2*Act_2 +...+ w_n*Act_n activations.shape
-            activations_final = relu(((parameters[class_i]*activations.T).T).sum(axis=0))
-   
+            activations_final = relu(((parameters[class_i]*activations.T).T).sum(axis=0)).to(device)
+            
             heatmaps = torch.cat((heatmaps, activations_final[None,:,:]))
 
-        return heatmaps
+        return heatmaps.detach().clone()
     
     def plot_saliency_map(self, x, y, technic, mask=None, class_plot=-1, n_noise=10, std=0.3, device='cuda'):
         """
@@ -150,11 +158,15 @@ class CAM_abstract:
 
         mean = [0.485, 0.456, 0.406]
         var = [0.229, 0.224, 0.225]
-        x_plot=((torch.reshape(x.cpu(), (3,224,224)).permute(1,2,0).numpy())*var)+mean
+        x_plot=((torch.reshape(x.cpu(), (3,299,299)).permute(1,2,0).numpy())*var)+mean
         
         if mask is not None:
-            mask_plot = torch.reshape(mask.cpu(), (3,224,224)).permute(1,2,0).numpy()
-        
+            aux = mask.cpu()
+            aux[aux>0]=1.
+            aux[aux<0]=0.
+            
+            mask_plot = torch.reshape(aux, (3,299,299)).permute(1,2,0).numpy()
+            
         # Getting the heatmaps
         heatmaps_pre = self.saliency_map(x, technic=technic, n_noise=n_noise, std=std, device=device)
         y_prob = soft(self(x))
@@ -171,16 +183,15 @@ class CAM_abstract:
             heatmaps_new.append(hm.cpu().detach().numpy())
 
         res=[]
-        res.append(cv2.resize(heatmaps_new[0], dsize=(224, 224), interpolation=cv2.INTER_CUBIC))
-        res.append(cv2.resize(heatmaps_new[1], dsize=(224, 224), interpolation=cv2.INTER_CUBIC))
+        res.append(cv2.resize(heatmaps_new[0], dsize=(299, 299), interpolation=cv2.INTER_CUBIC))
+        res.append(cv2.resize(heatmaps_new[1], dsize=(299, 299), interpolation=cv2.INTER_CUBIC))
         
         res_mask=[]
         for i in range(len(res)):
             aux = np.zeros_like(res[i])
-            aux[res[i]>0.25] = 1.
+            aux[res[i]>0.1] = 1.
             
             res_mask.append(cv2.cvtColor(aux,cv2.COLOR_GRAY2RGB))
-        
         
         # Taking the class predicted
         y_pred_mod_new = torch.argmax(y_prob, dim=1)
@@ -195,6 +206,7 @@ class CAM_abstract:
             
         print('PROB {}:\n\t- SANO: {:.5f}\n\t- CANCER: {:.5f}'.format(technic.upper(), dic_prob["sano"], dic_prob["cancer"]))
         print(f'(CLASS PREDICTED -- {cam_pred_name}) vs ({cam_act_name} -- ACTUAL CLASS)')
+        
         
         
         ###########################
@@ -223,6 +235,12 @@ class CAM_abstract:
         curr_axe_idx = 0
         for i in range(self.n_classes):
             if plot_hm[i]==1:
+                ###########################
+                # IoU
+                iou_valor = iou(mask_plot, res_mask[i])
+                print("\nIoU: ", iou_valor)
+                
+                
                 mask_2 = cv2.cvtColor(mask_plot,cv2.COLOR_RGB2GRAY)
                 mask_2 -= mask_2.min()
                 mask_2 /= mask_2.max()
@@ -258,3 +276,5 @@ class CAM_abstract:
                             wspace=0.4, 
                             hspace=0.4)
         plt.show()
+
+        return
