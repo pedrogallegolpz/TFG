@@ -8,10 +8,10 @@ from torch import nn
 
 import sys
 try:
-    from utils import iou
+    from utils import iou, generate_mask_from_heatmap
 except:
     sys.path.append("../")
-    from utils import iou
+    from utils import iou, generate_mask_from_heatmap
     
     
 # Define colormap
@@ -158,15 +158,33 @@ class CAM_abstract:
 
         mean = [0.485, 0.456, 0.406]
         var = [0.229, 0.224, 0.225]
-        x_plot=((torch.reshape(x.cpu(), (3,299,299)).permute(1,2,0).numpy())*var)+mean
+        
+        x_plot = ((x[0].cpu().permute(1,2,0).numpy())*var)+mean
+        x_plot = cv2.resize(x_plot, dsize=(299, 299), interpolation=cv2.INTER_CUBIC)
         
         if mask is not None:
-            aux = mask.cpu()
-            aux[aux>0]=1.
-            aux[aux<0]=0.
+            try:
+                mask.cpu()
+            except:
+                pass
             
-            mask_plot = torch.reshape(aux, (3,299,299)).permute(1,2,0).numpy()
-            
+            if len(mask.shape)!=2:
+                if len(mask.shape)==4:
+                    mask = mask[0]
+                    
+                if mask.shape[0]==3:
+                    mask = mask.permute(1,2,0)
+                
+                mask = mask.numpy()
+                if mask.shape[2]==3:
+                    mask = cv2.cvtColor(mask,cv2.COLOR_RGB2GRAY)
+              
+            # Reescalamos
+            mask = cv2.resize(mask, dsize=(299, 299), interpolation=cv2.INTER_CUBIC)
+        
+            mask[mask>0.]=1.
+            mask[mask<0.]=0.
+        
         # Getting the heatmaps
         heatmaps_pre = self.saliency_map(x, technic=technic, n_noise=n_noise, std=std, device=device)
         y_prob = soft(self(x))
@@ -187,11 +205,8 @@ class CAM_abstract:
         res.append(cv2.resize(heatmaps_new[1], dsize=(299, 299), interpolation=cv2.INTER_CUBIC))
         
         res_mask=[]
-        for i in range(len(res)):
-            aux = np.zeros_like(res[i])
-            aux[res[i]>0.1] = 1.
-            
-            res_mask.append(cv2.cvtColor(aux,cv2.COLOR_GRAY2RGB))
+        for i in range(len(res)): 
+            res_mask.append(generate_mask_from_heatmap(res[i], 0.15))
         
         # Taking the class predicted
         y_pred_mod_new = torch.argmax(y_prob, dim=1)
@@ -230,28 +245,22 @@ class CAM_abstract:
         
         if mask is not None:
             axes[1][0].title.set_text("---- MÁSCARA ORIGINAL ----")
-            axes[1][0].imshow(mask_plot)
+            axes[1][0].imshow(cv2.cvtColor(mask,cv2.COLOR_GRAY2RGB))
             
         curr_axe_idx = 0
         for i in range(self.n_classes):
             if plot_hm[i]==1:
                 ###########################
                 # IoU
-                iou_valor = iou(mask_plot, res_mask[i])
+                iou_valor = iou(mask, res_mask[i])
                 print("\nIoU: ", iou_valor)
                 
-                
-                mask_2 = cv2.cvtColor(mask_plot,cv2.COLOR_RGB2GRAY)
-                mask_2 -= mask_2.min()
-                mask_2 /= mask_2.max()
-                print("MAX", mask_2.max(), "MIN", mask_2.min(), "SHAPE", mask_2.shape)
-                print("MEJOR VALOR: ", (res[i]*mask_2).mean())
                 
                 if i==0:
                     axes[1][curr_axe_idx+1].title.set_text("---- MÁSCARA T. SANO ----")
                 else:
                     axes[1][curr_axe_idx+1].title.set_text("---- MÁSCARA T. CANCERÍGENO ----")
-                axes[1][curr_axe_idx+1].imshow(res_mask[i])
+                axes[1][curr_axe_idx+1].imshow(cv2.cvtColor(res_mask[i],cv2.COLOR_GRAY2RGB))
                 
                 
                 if i==0:
@@ -261,14 +270,9 @@ class CAM_abstract:
                 axes[0][curr_axe_idx+1].imshow(res[i], cmap=plt.get_cmap('turbo'))#cmap_good_vs_evil)
                 axes[0][curr_axe_idx+1].imshow(x_plot, alpha=0.5)
                 
-                
-                
-                
-
                 # Update current axe
                 curr_axe_idx +=1
         
-            
         plt.subplots_adjust(left=0.1,
                             bottom=0.1, 
                             right=0.9, 
