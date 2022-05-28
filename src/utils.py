@@ -29,18 +29,6 @@ from torch.utils.tensorboard import SummaryWriter
 FUNCIONES PyTORCH
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 # helper functions
-# (used in the `plot_classes_preds` function below)
-def matplotlib_imshow(img, one_channel=False):
-    if one_channel:
-        img = img.mean(dim=0)
-    img = img / 2 + 0.5     # unnormalize
-    npimg = img.cpu().numpy()
-    if one_channel:
-        plt.imshow(npimg, cmap="Greys")
-    else:
-        plt.imshow(np.transpose(npimg, (1, 2, 0)))
-        
-        
 def images_to_probs(net, images):
     '''
     Generates predictions and corresponding probabilities from a trained
@@ -53,31 +41,65 @@ def images_to_probs(net, images):
     return preds, [F.softmax(el, dim=0)[i].item() for i, el in zip(preds, output)]
 
 
-def plot_classes_preds(net, images, labels, classes=('Benign', 'Pathological')):
-    '''
-    Generates matplotlib Figure using a trained network, along with images
-    and labels from a batch, that shows the network's top prediction along
-    with its probability, alongside the actual label, coloring this
-    information based on whether the prediction was correct or not.
-    Uses the "images_to_probs" function.
-    '''
-    preds, probs = images_to_probs(net, images)
-    # plot the images in the batch, along with predicted and true labels
-    fig = plt.figure(figsize=(12, 48))
-    for idx in np.arange(4):
-        ax = fig.add_subplot(1, 4, idx+1, xticks=[], yticks=[])
-        matplotlib_imshow(images[idx], one_channel=True)
-        ax.set_title("{0}, {1:.1f}%\n(label: {2})".format(
-            classes[preds[idx]],
-            probs[idx] * 100.0,
-            classes[labels[idx]]),
-                    color=("green" if preds[idx]==labels[idx].item() else "red"))
-    return fig
-
 
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 FUNCIONES PROPIAS
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+def areas_iou(model, name, dataloader, writer=None, epoch=0, alpha=0.05, device='cuda'):
+    '''
+    Genera una figura de matplotlib del intersection over union del modelo
+    con todos los modelos diseñados para él.
+    '''
+    technics = ['cam','gradcam', 'gradcampp', 'smoothgradcampp']
+
+    iou_tecnicas = list()
+    areas_bajo_iou = list()
+    
+
+    if 'cam' != name.split('-')[1]:
+        ncols = 3
+        technics = ['gradcam', 'gradcampp', 'smoothgradcampp']
+    else:
+        ncols = 1
+        technics = ['cam']
+    
+    axe_idx=0
+    fig, axes = plt.subplots(nrows=1,
+                            ncols=ncols,
+                            figsize=(5*ncols,5)) 
+    
+    plt.setp(axes, xticks=np.linspace(0,1,11), yticks=np.linspace(0,1,11))
+    
+    for technique in technics:
+        iou_medios, _, mejor_umbral = curvas_umbral_mascara(model, 
+                                                            technique, 
+                                                            dataloader, 
+                                                            alpha=alpha,
+                                                            device=device)
+        iou_tecnicas.append(iou_medios)
+
+
+
+        print('Técnica: ', technique)
+        
+        
+        # Área bajo la curva
+        area = 0
+        for i in range(len(iou_medios)-1):
+            minimo = min(iou_medios[i],iou_medios[i+1])
+            maximo = max(iou_medios[i],iou_medios[i+1])
+            area += minimo*alpha + (maximo-minimo)*(alpha*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+
+            
+        
+        writer.add_scalar(f'IoU_evol-{technique}',
+                          area,
+                          epoch)
+
+
+    return fig
+
 
 def get_data_transforms(dsize):
     # Just normalize for validation
@@ -111,32 +133,22 @@ def load_data(path, dsize=224, batch_size=8, split_size=0.2):# Data augmentation
     image_datasets = {x: ImageFolder_and_MaskFolder(os.path.join(data_dir, x),
                                                              data_transforms[x]
                                                     )
-                      for x in ['train', 'test']}
+                      for x in ['train', 'val', 'test']}
 
     dataset_sizes = {
-                        "train": int(len(image_datasets["train"])-np.floor(len(image_datasets["train"])*split_size)),
-                        "val": int(np.floor(len(image_datasets["train"])*split_size)),
+                        "train": len(image_datasets["train"]),
+                        "val": len(image_datasets["val"]),
                         "test": len(image_datasets["test"])
                     }
 
-    # Creamos el conjunto de validación
-    indices = np.array(range(dataset_sizes['train']+dataset_sizes['val']))
-
-    np.random.shuffle(indices)
-    train_indices, val_indices = indices[dataset_sizes['val']:], indices[:dataset_sizes['val']]
-    
-    # Creating PT data samplers and loaders:
-    train_sampler = torch.utils.data.sampler.SubsetRandomSampler(train_indices)
-    valid_sampler = torch.utils.data.sampler.SubsetRandomSampler(val_indices)
-    
     dataloaders = {
                     "train": torch.utils.data.DataLoader(image_datasets["train"], 
                                                          batch_size=batch_size,
-                                                         sampler=train_sampler,
+                                                         shuffle=True,
                                                          num_workers=2),
-                    "val": torch.utils.data.DataLoader(image_datasets["train"], 
-                                                         batch_size=batch_size,
-                                                         sampler=valid_sampler,
+                    "val": torch.utils.data.DataLoader(image_datasets["val"], 
+                                                         batch_size=1,
+                                                         shuffle=False,
                                                          num_workers=2),
                     "test": torch.utils.data.DataLoader(image_datasets["test"], 
                                                          batch_size=1,
@@ -183,7 +195,7 @@ def load_model(path_modelos, name, device, original_model=None):
 ############################################################################
 # ENTRENAMIENTO
 ############################################################################
-def train_model(model, dic_best_values, dataloaders, dataset_sizes,criterion, optimizer, scheduler, early_stopping=-1, num_epochs=2, device='cuda', writer = None):
+def train_model(model, name, dic_best_values, dataloaders, dataset_sizes,criterion, optimizer, scheduler, early_stopping=-1, num_epochs=2, device='cuda', writer = None):
     since = time.time()
 
     # Saving actual weights as best weights
@@ -238,13 +250,16 @@ def train_model(model, dic_best_values, dataloaders, dataset_sizes,criterion, op
                     
                 images_seen += inputs.size(0)
                 if (i %  int(dataset_sizes[phase]/(20*len(inputs))+0.5)==0 and i>0) or i==dataset_sizes[phase]-1:
-                    print('Epoch [%d/%d], Batch[%d/%d] loss: %.3f' %(epoch + 1, num_epochs, i, dataset_sizes[phase]/len(inputs), running_loss / (i * inputs.size(0))))
+                    print(f'[{name}]. Epoch [{epoch + 1}/{num_epochs}], Batch[{i}/{int(dataset_sizes[phase]/len(inputs))}] loss: {running_loss / (i * inputs.size(0)):.3f}')
                     
                     if not writer is None:
                         # ...log the running loss
                         writer.add_scalar(f'{phase} loss',
                                             running_loss / (i * inputs.size(0)),
                                             epoch * dataset_sizes[phase] + images_seen)
+
+
+                        
             
                         
             epoch_loss = running_loss / dataset_sizes[phase]
@@ -263,6 +278,16 @@ def train_model(model, dic_best_values, dataloaders, dataset_sizes,criterion, op
                 
                 # early stopping
                 epochs_without_improvements = 0
+
+                if not writer is None:
+                    areas_iou(model, 
+                              name, 
+                              dataloaders['val'],
+                              writer=writer, 
+                              epoch=epoch, 
+                              alpha=0.05, 
+                              device=device)
+
             else:
                 # No hay mejora. 
                 # early stopping
@@ -340,8 +365,8 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
     models_dic = {}
     
     
-    for modelo_base in list(models_base.keys())[1:]:
-        for name in list(technics.keys()):
+    for modelo_base in models_base.keys():
+        for name in technics.keys():
             if not technics[f'{name}']:
                 continue
             
@@ -367,10 +392,11 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
             criterion = torch.nn.CrossEntropyLoss() 
         
             # Decay LR by a factor of 0.1 every 7 epochs
-            exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+            exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
         
             # Entrenamos
             model_gradcam, best_val_loss, best_val_acc = train_model(models_dic[f'{modelo_base}-{name}']['model'],
+                                                                  f'{modelo_base}-{name}',
                                                                   models_dic[f'{modelo_base}-{name}']['best_values'],
                                                                   dataloaders, 
                                                                   dataset_sizes,
@@ -383,7 +409,7 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
                                                                   device = device)
         
             # Guardamos el mejor modelo del entrenamiento
-            torch.save(models_dic[f'{modelo_base}-{name}']['model'], path_modelos+f"model_{modelo_base}-{name}.pth")
+            torch.save(models_dic[f'{modelo_base}-{name}']['model'], path_modelos+f"model_{modelo_base}-{name.lower()}.pth")
             
             
             
@@ -394,10 +420,10 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
                 acc = best_val_acc
 
             models_dic[f'{modelo_base}-{name}']['best_values'] = {'loss': best_val_loss, 'acc': acc}
-            with open(path_modelos+f'dic_best_values_model_{modelo_base}-{name}.json','w') as f_dic:
+            with open(path_modelos+f'dic_best_values_model_{modelo_base}-{name.lower()}.json','w') as f_dic:
                 json.dump(models_dic[f'{modelo_base}-{name}']['best_values'], f_dic)
             
-            print(f'model_{modelo_base}-{name} guardado')
+            print(f'model_{modelo_base}-{name.lower()} guardado')
         
         
 ############################################################################
@@ -458,7 +484,7 @@ def test_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True):
     # List of technics to train
     technics = {'cam': cam, 'cam_pro': cam_pro}
     
-    modelos_base = ['VGG', 'RESNET', 'MOBILENET', 'INCEPTION']
+    modelos_base = ['VGG', 'RESNET', 'MOBILENET', 'EFFICIENTNET']
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print('DEVICE: ', device)
@@ -498,18 +524,25 @@ def prepare_mask(mask):
         pass
     
     if len(mask.shape)!=2:
+        if len(mask.shape)==4:
+            mask = mask[0]
+            
         if mask.shape[0]==3:
             mask = mask.permute(1,2,0)
         
-        mask = mask.numpy()
+        if not isinstance(mask,np.ndarray):
+            mask = mask.numpy()
+        
+        
         if mask.shape[2]==3:
             mask = cv2.cvtColor(mask,cv2.COLOR_RGB2GRAY)
         
     # Reescalamos
     mask = cv2.resize(mask, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
 
-    mask[mask>0.]=1.
-    mask[mask<0.]=0.
+    
+    mask[mask>0.1]=1.
+    mask[mask<0.1]=0.
     
     return mask
 
@@ -523,83 +556,129 @@ def iou(mask1, mask2):
     
     
     
-def generate_mask_from_heatmap(heatmap, umbral):
-    # Normalizamos
-    heatmap /= heatmap.max()
-    
+def generate_mask_from_heatmap(heatmap, umbral, maximo=-1):
     try:
         # Pasamos a np array
-        heatmap = heatmap.cpu().detach().numpy()
+        heatmap = heatmap.cpu().detach()
     except:
         pass
+
+    # Normalizamos con el máximo representativo
+    #heatmap -= heatmap.min()
+    relu = torch.nn.ReLU()
+
+    heatmap_norm = torch.log2(torch.ones_like(heatmap)+relu(heatmap))
+    
+    if maximo==-1:
+        maximo = heatmap_norm.max()
+    heatmap_norm /= maximo 
+    
+    
     
     # Reescalamos
-    heatmap_aumentado = cv2.resize(heatmap, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
+    heatmap_aumentado = cv2.resize(heatmap.numpy(), dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
+    heatmap_norm_aumentado = cv2.resize(heatmap_norm.numpy(), dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
     
     # Creamos la máscara
-    mask = np.zeros_like(heatmap_aumentado)
-    mask[heatmap_aumentado>umbral] = 1.
+    mask = np.zeros_like(heatmap_norm_aumentado)
+    mask[heatmap_norm_aumentado>umbral] = 1.
     
-    return mask
+    
+    return heatmap_aumentado, mask
     
     
  
     
 
-def curvas_umbral_mascara(model, technique, dataloader_val, device='cuda'):
+def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'):
     model.eval()   # Set model to evaluate mode
 
-    # Iterate over data.
-    iou_tabla = []
-    for i, (inputs, masks, labels) in enumerate(dataloader_val):
-        for inp, mask, label in zip(inputs, masks,labels):
-            if label.item()!=1:
-                continue
-        
-            inp = inp.to(device)[None,:]
-            label=label.to(device)
+    # Cogemos los heatmaps para sacar un valor máximo de activación representativo
+    maximos_heatmaps = list()
+    heatmaps = list()
+    masks_heatmaps =  list()
+    labels_heatmaps =  list()
+    print("técnica: ",technique)
+    for i, (inp, mask, label) in enumerate(dataloader_val):
+        if label[0].item()!=1 or mask.mean()/mask.max()>0.9:
+            continue
     
-    
-            heatmaps = model.saliency_map(inp,
-                                         technique,
-                                         n_noise=20,
-                                         std=0.2,
-                                         device=device)
+        inp = inp.to(device)
+        label=label.to(device)
 
+
+        heatmaps.append(model.saliency_map(inp,
+                                            technique,
+                                            n_noise=10,
+                                            std=0.2,
+                                            device=device)[label[0].item()])
+        masks_heatmaps.append(mask)
+        labels_heatmaps.append(label)
+
+        maximos_heatmaps.append(heatmaps[-1].cpu().max())
             
-            iou_fila = []
-            for umbral in np.linspace(0,1,21):
-                mask_generated = generate_mask_from_heatmap(heatmaps[label.item()], umbral)
-                iou_fila.append(iou(mask, mask_generated))
-            
-            iou_tabla.append(iou_fila)
-            
-            
-            if i % 40 == 39:
-                print(f'[{i}]')
-     
+
+
+    # Calculamos el valor máximo de activación representativo
+    maximo_representativo = np.percentile(maximos_heatmaps, 5)
+    
+    iou_tabla = []
+    
+    
+    import math
+    nrows =1+int(math.sqrt(len(heatmaps)))
+    ncols = int(math.sqrt(len(heatmaps)))
+    """
+    fig, axes = plt.subplots(nrows=nrows,
+                             ncols=ncols,
+                             figsize=(ncols*5,nrows*5))
+    """
+   
+    i,j=0,0
+    for heatmap, mask, label in zip(heatmaps, masks_heatmaps, labels_heatmaps):
+        iou_fila = []
+        
+        for umbral in np.linspace(0,1,int((1./alpha)+1)):
+            heatmap_aumentado, mask_generated = generate_mask_from_heatmap(heatmap=heatmap,
+                                                                           umbral=umbral)
+
+            """
+            if umbral==0.2:
+                axes[i,j].imshow(cv2.cvtColor(prepare_mask(mask_generated),cv2.COLOR_GRAY2RGB))
                 
+                j+=1
+                j%=ncols
+                i = i+1 if j==0 else i
+        
+            """
+            
+            iou_fila.append(iou(mask, mask_generated))
+
+
+           
+
+        iou_tabla.append(iou_fila)
+        """
+        # Área bajo la curva
+        iou_medios =  np.array(iou_tabla).mean(axis=0)
+        area = 0
+        if len(iou_tabla)>1:
+            for i in range(len(iou_medios)-1):
+                minimo = min(iou_medios[i],iou_medios[i+1])
+                maximo = max(iou_medios[i],iou_medios[i+1])
+                area += minimo*alpha + (maximo-minimo)*(alpha*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+
+            print(f'Track ÁREA [{technique}-{len(iou_tabla)}]: {area}')
+        """
+    """
+    plt.show()
+    """
     iou_tabla = np.array(iou_tabla)
     valores_iou_medios = iou_tabla.mean(axis=0)
 
-    print(f"[{technique}] Mejor valor: ", valores_iou_medios.max(), " con el umbral: ", np.argmax(valores_iou_medios)*0.05)
+    mejor_umbral = np.argmax(valores_iou_medios)*alpha
     
-    # Área bajo la curva
-    area = 0
-    for i in range(len(valores_iou_medios)-1):
-        minimo = min(valores_iou_medios[i],valores_iou_medios[i+1])
-        maximo = max(valores_iou_medios[i],valores_iou_medios[i+1])
-        area += minimo*0.05 + (maximo-minimo)*0.0025            # Es como sumar el cuadrado y luego el triángulo que queda arriba
-        
-    print(f"[{technique}] Área bajo la curva: ", area)
-    
-    # Plot de la curva
-    plt.plot(np.linspace(0,1,21), valores_iou_medios, 'o')
-    plt.title(f"[{technique}]")
-    plt.show()
-    
-    
-    return valores_iou_medios, area
+    return valores_iou_medios, maximo_representativo, mejor_umbral
     
                 
                 
@@ -607,22 +686,31 @@ def curvas_umbral_mascara(model, technique, dataloader_val, device='cuda'):
 def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=True, device=None):
     # List of technics to train
     model_classes = {'cam': cam, 'cam_pro': cam_pro}
-    technics = ['cam','gradcam', 'gradcampp', 'smoothgradcampp']
-    modelos_base = ['VGG', 'RESNET', 'MOBILENET', 'INCEPTION']
+    modelos_base = ['VGG', 'RESNET', 'MOBILENET', 'EFFICIENTNET']
 
+    alpha = 0.05
 
     if device is None:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print('DEVICE: ', device)
 
     # Read datasets
-    dataloaders, dataset_sizes = load_data(path_dataset)
+    dataloaders, _ = load_data(path_dataset)
 
     models_dic = {}
-    iou_tecnicas = np.array([])
-    areas_bajo_iou = np.array([])
     
     for modelo_base in modelos_base:
+        iou_tecnicas = list()
+        areas_bajo_iou = list()
+        
+        
+        fig, axes = plt.subplots(nrows=1,
+                                 ncols=4,
+                                 figsize=(20,5)) 
+        
+        plt.setp(axes, yticks=np.linspace(0,1,11))
+        
+        axe_idx=0
         for name in model_classes.keys():
             if not model_classes[f'{name}']:
                 continue
@@ -631,22 +719,46 @@ def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=Tr
             models_dic[f'{modelo_base}-{name}'] = load_model(path_modelos, f'{modelo_base}-{name}', device)
             
             if 'cam' != name:
-                for technique in technics[1:]:
-                    iou_medios, area = curvas_umbral_mascara(models_dic[f'{modelo_base}-{name}']['model'], 
-                                                        technique, 
-                                                        dataloaders['val'], 
-                                                        device=device)
+                technics = ['gradcam', 'gradcampp', 'smoothgradcampp']
             else:
-                iou_medios, area = curvas_umbral_mascara(models_dic[f'{modelo_base}-{name}']['model'], 
-                                                      None, 
-                                                      dataloaders['val'], 
-                                                      device=device)     
-            
-            
-        np.append(iou_tecnicas, iou_medios)
-        np.append(areas_bajo_iou, area)
-        
-        print(f"La mejor técnica para {modelo_base}-{name}, ha sido: ", technics[np.argmax(areas_bajo_iou)], " con un área de: ", areas_bajo_iou.max())
+                technics = ['cam']
+
+            for t_idx, technique in enumerate(technics):
+                iou_medios, maximo_representativo, mejor_umbral = curvas_umbral_mascara(models_dic[f'{modelo_base}-{name}']['model'], 
+                                                                                        technique, 
+                                                                                        dataloaders['val'], 
+                                                                                        alpha=alpha,
+                                                                                        device=device)
+                iou_tecnicas.append(iou_medios)
+                
+                # Guardamos info 
+                models_dic[f'{modelo_base}-{name}']['best_values'][f'{technique}-maximo_representativo'] = maximo_representativo
+                models_dic[f'{modelo_base}-{name}']['best_values'][f'{technique}-umbral'] = mejor_umbral
+                with open(path_modelos+f'dic_best_values_model_{modelo_base}-{name.lower()}.json','w') as f_dic:
+                    json.dump(models_dic[f'{modelo_base}-{name}']['best_values'], f_dic)
+                    
+                
+                # Área bajo la curva
+                area = 0
+                for i in range(len(iou_medios)-1):
+                    minimo = min(iou_medios[i],iou_medios[i+1])
+                    maximo = max(iou_medios[i],iou_medios[i+1])
+                    area += minimo*alpha + (maximo-minimo)*(alpha*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+
+                areas_bajo_iou.append(area)
+                    
+                title = f"Mejor valor: {iou_medios.max():.3f}\n con el umbral: {mejor_umbral:.4f}\n"
+                title += f"Área bajo la curva: {area}"
+
+                print(title)
+                # Ploteamos
+                axes[axe_idx].plot(np.linspace(0,1,int((1./alpha)+1)), iou_medios, 'o')
+                axes[axe_idx].fill_between(np.linspace(0,1,int((1./alpha)+1)), iou_medios, color='blue', alpha=.25)
+                axes[axe_idx].title.set_text(title)
+                axe_idx+=1
+                    
+        plt.show()
+        print(f"La mejor técnica para {modelo_base}-{name}, ha sido: ", technics[np.argmax(areas_bajo_iou)], " con un área de: ", np.max(areas_bajo_iou))
     
     
         

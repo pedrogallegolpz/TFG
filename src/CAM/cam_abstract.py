@@ -1,18 +1,18 @@
 import abc  # For implementing abstract methods
-import numpy as np
 import cv2
-import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import torch
 from torch import nn
 
 import sys
 try:
-    from utils import iou, generate_mask_from_heatmap
+    from utils import generate_mask_from_heatmap
 except:
     sys.path.append("../")
-    from utils import iou, generate_mask_from_heatmap
+    from utils import generate_mask_from_heatmap
     
+    
+import matplotlib.pyplot as plt
     
 # Define colormap
 colors = [(1, 0, 0), (0, 0, 1),  (0, 1, 0)]  # R -> G -> B
@@ -96,17 +96,16 @@ class CAM_abstract:
         return
     
 
-    def saliency_map(self, x, technic='gradcam', n_noise=1, std=0, device='cuda'):
+    def saliency_map(self, x, technique='gradcam', n_noise=1, std=0, device='cuda'):
         # Evaluate mode
         self.eval()
 
-        if n_noise>1 and technic=='smoothgradcampp':
+        if n_noise>1 and technique=='smoothgradcampp':
             # Calculate (if it's the case) the noisy inputs
             std_tensor = torch.ones_like(x) * std
             input_with_noise = torch.tensor([]).to(device)
             input_with_noise = torch.cat((input_with_noise,x))
 
-            
             for n in range(n_noise):
                 # Add noise to input
                 x_noise = torch.normal(mean=x, std=std_tensor)
@@ -118,7 +117,7 @@ class CAM_abstract:
         activations = self.get_activations(x)
         
         # Getting the parameters from the first layer of self.fc (the unique layer)
-        parameters = self.get_weights(technic, activations, device=device)
+        parameters = self.get_weights(technique, activations, device=device)
 
         # Getting the tensor with three dimensions (if there are noise, we get the average of the noisy activations)
         activations = activations.mean(axis=0)
@@ -135,150 +134,49 @@ class CAM_abstract:
 
         return heatmaps.detach().clone()
     
-    def plot_saliency_map(self, x, y, technic, mask=None, class_plot=-1, n_noise=10, std=0.3, device='cuda'):
+    def generate_masks(self, x, dic_best_values, n_noise=10, std=0.1, gradcam=True, gradcampp=True, smoothgradcampp=True, device='cuda'):
         """
         Parameters:
         -----------
             - x: input 
-
-            - technic: Class Activation Mapping technic to use
-            
-            - y: {x} actual class
-
-            - class_plot:
-                    {-2} to plot all classes
-                    {-1} to plot the class predicted
-                    {n}  to plot the n-class (n in {0,1,2,...})
-                    
             -n_noise: int
                 number of noised inputs
+            - std: float
+                amount of standard desviation
         """
-        # utils
-        soft = nn.Softmax(dim=1)
-
-        mean = [0.485, 0.456, 0.406]
-        var = [0.229, 0.224, 0.225]
+        dic_technics = {'cam':self.name=='CAM',
+                        'gradcam':gradcam and self.name!='CAM',
+                        'gradcampp':gradcampp and self.name!='CAM',
+                        'smoothgradcampp':smoothgradcampp and self.name!='CAM'
+                        }
         
-        x_plot = ((x[0].cpu().permute(1,2,0).numpy())*var)+mean
-        x_plot = cv2.resize(x_plot, dsize=(299, 299), interpolation=cv2.INTER_CUBIC)
         
-        if mask is not None:
-            try:
-                mask.cpu()
-            except:
-                pass
-            
-            if len(mask.shape)!=2:
-                if len(mask.shape)==4:
-                    mask = mask[0]
-                    
-                if mask.shape[0]==3:
-                    mask = mask.permute(1,2,0)
+        
+        dic_heatmaps = {}
+        dic_masks = {}
+        for technique in dic_technics.keys():
+            if dic_technics[f'{technique}']:
+                # Getting the heatmaps
+                heatmaps_pre = self.saliency_map(x, technique=technique, n_noise=n_noise, std=std, device=device)
                 
-                mask = mask.numpy()
-                if mask.shape[2]==3:
-                    mask = cv2.cvtColor(mask,cv2.COLOR_RGB2GRAY)
-              
-            # Reescalamos
-            mask = cv2.resize(mask, dsize=(299, 299), interpolation=cv2.INTER_CUBIC)
+                
+                # Dividimos por el mayor absoluto para tener mapas 
+                dic_heatmaps[f'{technique}'] = list()
+                dic_masks[f'{technique}'] = list()
+                for i in range(len(heatmaps_pre)):
+                    aux_heatmap, aux_mask = generate_mask_from_heatmap(heatmaps_pre[i],
+                                                                       #maximo_representativo=dic_best_values[f'{technique}-maximo_representativo'],
+                                                                       umbral=dic_best_values[f'{technique}-umbral'])
+                    dic_heatmaps[f'{technique}'].append(aux_heatmap) 
+                    dic_masks[f'{technique}'].append(aux_mask) 
+                    
         
-            mask[mask>0.]=1.
-            mask[mask<0.]=0.
+        return dic_heatmaps, dic_masks
         
-        # Getting the heatmaps
-        heatmaps_pre = self.saliency_map(x, technic=technic, n_noise=n_noise, std=std, device=device)
-        y_prob = soft(self(x))
+        
+        
+        
+        
+        
+        
     
-        heatmaps_new = list()
-        
-        # Dividimos por el mayor absoluto para tener mapas 
-        for i in range(len(heatmaps_pre)):
-            maximo = heatmaps_pre[i].max()
-            heatmaps_pre[i] /= maximo
-
-        # Visualización
-        for hm in heatmaps_pre: 
-            heatmaps_new.append(hm.cpu().detach().numpy())
-
-        res=[]
-        res.append(cv2.resize(heatmaps_new[0], dsize=(299, 299), interpolation=cv2.INTER_CUBIC))
-        res.append(cv2.resize(heatmaps_new[1], dsize=(299, 299), interpolation=cv2.INTER_CUBIC))
-        
-        res_mask=[]
-        for i in range(len(res)): 
-            res_mask.append(generate_mask_from_heatmap(res[i], 0.15))
-        
-        # Taking the class predicted
-        y_pred_mod_new = torch.argmax(y_prob, dim=1)
-        dic_prob = {"sano": y_prob[0][0], "cancer": y_prob[0][1] }
-        name_classes = list(dic_prob.keys())
-        
-        cam_pred_name = name_classes[y_pred_mod_new[0]] 
-        cam_act_name = name_classes[y] 
-
-        if self.name=='CAM':
-            technic=='CAM'
-            
-        print('PROB {}:\n\t- SANO: {:.5f}\n\t- CANCER: {:.5f}'.format(technic.upper(), dic_prob["sano"], dic_prob["cancer"]))
-        print(f'(CLASS PREDICTED -- {cam_pred_name}) vs ({cam_act_name} -- ACTUAL CLASS)')
-        
-        
-        
-        ###########################
-        #   HACEMOS PLOT
-        plot_hm = np.zeros(self.n_classes)
-        for i in range(self.n_classes):
-            if class_plot==-2 or (class_plot==-1 and i==int(y_pred_mod_new)) or (class_plot==i):
-                plot_hm[i]=1
-        
-                    
-        n_cols=int(plot_hm.sum())+1
-        n_rows=2
-        
-        fig, axes = plt.subplots(nrows=n_rows,
-                                 ncols=n_cols,
-                                 gridspec_kw={'width_ratios':np.ones(n_cols)})
-        
-        # Plot de la imagen original
-        axes[0][0].title.set_text("---- IMAGEN ORIGINAL ----")
-        axes[0][0].imshow(x_plot)
-        
-        if mask is not None:
-            axes[1][0].title.set_text("---- MÁSCARA ORIGINAL ----")
-            axes[1][0].imshow(cv2.cvtColor(mask,cv2.COLOR_GRAY2RGB))
-            
-        curr_axe_idx = 0
-        for i in range(self.n_classes):
-            if plot_hm[i]==1:
-                ###########################
-                # IoU
-                iou_valor = iou(mask, res_mask[i])
-                print("\nIoU: ", iou_valor)
-                
-                
-                if i==0:
-                    axes[1][curr_axe_idx+1].title.set_text("---- MÁSCARA T. SANO ----")
-                else:
-                    axes[1][curr_axe_idx+1].title.set_text("---- MÁSCARA T. CANCERÍGENO ----")
-                axes[1][curr_axe_idx+1].imshow(cv2.cvtColor(res_mask[i],cv2.COLOR_GRAY2RGB))
-                
-                
-                if i==0:
-                    axes[0][curr_axe_idx+1].title.set_text("---- HEATMAP T. SANO ----")
-                else:
-                    axes[0][curr_axe_idx+1].title.set_text("---- HEATMAP T. CANCERÍGENO ----")
-                axes[0][curr_axe_idx+1].imshow(res[i], cmap=plt.get_cmap('turbo'))#cmap_good_vs_evil)
-                axes[0][curr_axe_idx+1].imshow(x_plot, alpha=0.5)
-                
-                # Update current axe
-                curr_axe_idx +=1
-        
-        plt.subplots_adjust(left=0.1,
-                            bottom=0.1, 
-                            right=0.9, 
-                            top=0.9, 
-                            wspace=0.4, 
-                            hspace=0.4)
-        plt.show()
-
-        return

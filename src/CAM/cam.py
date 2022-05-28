@@ -75,7 +75,7 @@ class CAM_model(nn.Module, CAM_abstract):
         return None
        
 class CAM(nn.Module, CAM_abstract):   
-    name = ""
+    name = "CAM_PRO"
 
     def __init__(self, originalModel, D_out):
         super(CAM, self).__init__()
@@ -144,11 +144,8 @@ class CAM(nn.Module, CAM_abstract):
         
         return x_mod
 
-    def get_weights(self, technic='gradcam', activations=None, device='cuda'):
-        assert(activations!=None)        
-        # With default parameters
-        flat = nn.Flatten()
-
+    def get_weights(self, technique, activations=None, device='cuda'):
+        assert(activations!=None)     
         # utils
         relu = nn.ReLU()
         
@@ -198,21 +195,20 @@ class CAM(nn.Module, CAM_abstract):
             relu_dydA = relu(dydA)
             # Getting the parameters as a weighted sum of the noisy gradients
             #subweights = self.get_subweights(activations[0], gradients_with_noise[class_i]) #
-            subweights = self.get_subweights(technic = technic, 
+            subweights = self.get_subweights(technique = technique, 
                                              activations = activations.mean(axis=0), 
                                              gradients = gradients_with_noise[class_i]) 
 
 
-            
-            if technic!='gradcam':
+            if technique!='gradcam':
                 # normalizamos
+                
                 subweights_thresholding = torch.where(relu_dydA>0, subweights, relu_dydA) # donde relu_dydA es cero, esto será cero
                 
                 subweights_normalization_constant = subweights_thresholding.sum(axis=(1,2))
                 subweights_normalization_constant_processed = torch.where(subweights_normalization_constant != 0.0, 
                                                                           subweights_normalization_constant, 
                                                                           torch.ones_like(subweights_normalization_constant))
-                
                 subweights /= subweights_normalization_constant_processed[:,None,None].expand(subweights.shape)
 
             new_weight = (subweights*relu_dydA).sum(axis=(1,2))
@@ -224,10 +220,10 @@ class CAM(nn.Module, CAM_abstract):
         return weights
 
     
-    def get_subweights(self, technic='gradcam', activations=None, gradients=None):
+    def get_subweights(self, technique, activations=None, gradients=None):
         assert(activations!=None and activations!=None)
         
-        if technic!='gradcam':
+        if technique!='gradcam':
             # Numerator 
             numerator = gradients.pow(2).mean(axis=0)
     
@@ -243,6 +239,6 @@ class CAM(nn.Module, CAM_abstract):
             
             
         else:
-            alpha = 1./torch.ones_like(activations).sum() * torch.ones_like(activations)
+            alpha = (1./torch.ones_like(activations).sum()) * torch.ones_like(activations)
                 
         return alpha
