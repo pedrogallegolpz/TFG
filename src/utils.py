@@ -1,3 +1,4 @@
+from sklearn.metrics import accuracy_score
 import torch
 import torch.optim as optim
 import torchvision.models as models
@@ -21,6 +22,7 @@ import CAM.cam
 from dataset import ImageFolder_and_MaskFolder
 
 import cv2
+import math
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -168,7 +170,7 @@ def load_data(path, dsize=224, batch_size=8, split_size=0.2):# Data augmentation
     return dataloaders, dataset_sizes
 
 
-def load_model(path_modelos, name, device, original_model=None):
+def load_model(path_modelos, name, device, original_model=None, print_terminal=True):
     name = name.lower()
     model = {}
     # Load model
@@ -176,15 +178,19 @@ def load_model(path_modelos, name, device, original_model=None):
         model['model'] = torch.load(path_modelos+f"model_{name}.pth").to(device)
         with open(path_modelos+f'dic_best_values_model_{name}.json') as f_dic:
              model['best_values'] = json.load(f_dic)
-        print(f"model_{name} loaded")
+        
+        if print_terminal:
+            print(f"model_{name} loaded")
     except:
         if name.split('-')[-1]=='cam':
             model['model'] = CAM.cam.CAM_model(original_model, D_out=2)
         else:
             model['model'] = CAM.cam.CAM(original_model, D_out=2)
        
-        model['best_values'] = {'loss': math.inf, 'acc':0.}
-        print(f"model_{name} not found") 
+        model['best_values'] = {'loss': math.inf, 'acc':0., 'epochs':0}
+
+        if print_terminal:
+            print(f"model_{name} not found") 
         
         
     model['model'] = model['model'].to(device)
@@ -202,7 +208,8 @@ def train_model(model, name, dic_best_values, dataloaders, dataset_sizes,criteri
     best_model_wts = copy.deepcopy(model.state_dict())
     best_loss = dic_best_values['loss']
     best_acc = dic_best_values['acc']
-
+    curr_epoch = dic_best_values['epochs']
+    num_epochs_ran = 0
     epochs_without_improvements = 0
     finish_train = False
     
@@ -256,7 +263,7 @@ def train_model(model, name, dic_best_values, dataloaders, dataset_sizes,criteri
                         # ...log the running loss
                         writer.add_scalar(f'{phase} loss',
                                             running_loss / (i * inputs.size(0)),
-                                            epoch * dataset_sizes[phase] + images_seen)
+                                            (curr_epoch+epoch) * dataset_sizes[phase] + images_seen)
 
 
                         
@@ -264,6 +271,8 @@ def train_model(model, name, dic_best_values, dataloaders, dataset_sizes,criteri
                         
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            num_epochs_ran = epoch 
+
             print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
 
             if phase == 'train':
@@ -275,18 +284,9 @@ def train_model(model, name, dic_best_values, dataloaders, dataset_sizes,criteri
                 best_loss = epoch_loss
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
-                
+
                 # early stopping
                 epochs_without_improvements = 0
-
-                if not writer is None:
-                    areas_iou(model, 
-                              name, 
-                              dataloaders['val'],
-                              writer=writer, 
-                              epoch=epoch, 
-                              alpha=0.05, 
-                              device=device)
 
             else:
                 # No hay mejora. 
@@ -308,7 +308,7 @@ def train_model(model, name, dic_best_values, dataloaders, dataset_sizes,criteri
     # load best model weights
     model.load_state_dict(best_model_wts)
 
-    return model, best_loss, best_acc
+    return model, best_loss, best_acc, curr_epoch+num_epochs_ran+1
 
 
 def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=1, learning_rate=0.001, early_stopping=-1, momentum=0.9, device=None):
@@ -391,35 +391,34 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
             optimizer = optim.SGD(models_dic[f'{modelo_base}-{name}']['model'].parameters(), lr=learning_rate, momentum=momentum)
             criterion = torch.nn.CrossEntropyLoss() 
         
-            # Decay LR by a factor of 0.1 every 7 epochs
+            # Decay LR by a factor of 0.5 every 5 epochs
             exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
         
             # Entrenamos
-            model_gradcam, best_val_loss, best_val_acc = train_model(models_dic[f'{modelo_base}-{name}']['model'],
-                                                                  f'{modelo_base}-{name}',
-                                                                  models_dic[f'{modelo_base}-{name}']['best_values'],
-                                                                  dataloaders, 
-                                                                  dataset_sizes,
-                                                                  criterion,
-                                                                  optimizer,
-                                                                  exp_lr_scheduler,
-                                                                  early_stopping=early_stopping,
-                                                                  num_epochs = epochs,
-                                                                  writer = writer,
-                                                                  device = device)
+            model, best_val_loss, best_val_acc, epochs_ran = train_model(models_dic[f'{modelo_base}-{name}']['model'],
+                                                                        f'{modelo_base}-{name}',
+                                                                        models_dic[f'{modelo_base}-{name}']['best_values'],
+                                                                        dataloaders, 
+                                                                        dataset_sizes,
+                                                                        criterion,
+                                                                        optimizer,
+                                                                        exp_lr_scheduler,
+                                                                        early_stopping=early_stopping,
+                                                                        num_epochs = epochs,
+                                                                        writer = writer,
+                                                                        device = device)
         
             # Guardamos el mejor modelo del entrenamiento
-            torch.save(models_dic[f'{modelo_base}-{name}']['model'], path_modelos+f"model_{modelo_base}-{name.lower()}.pth")
-            
-            
-            
+            torch.save(model, path_modelos+f"model_{modelo_base}-{name.lower()}.pth")
     
             try:
                 acc = best_val_acc.item()
             except:
                 acc = best_val_acc
 
-            models_dic[f'{modelo_base}-{name}']['best_values'] = {'loss': best_val_loss, 'acc': acc}
+            models_dic[f'{modelo_base}-{name}']['best_values'] = {'loss': best_val_loss, 
+                                                                  'acc': acc,
+                                                                  'epochs': epochs_ran}
             with open(path_modelos+f'dic_best_values_model_{modelo_base}-{name.lower()}.json','w') as f_dic:
                 json.dump(models_dic[f'{modelo_base}-{name}']['best_values'], f_dic)
             
@@ -437,6 +436,8 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda', writ
     running_loss = 0.0
     running_corrects = 0
 
+    tpfptnfn = [[0,0],[0,0]]
+
     # Iterate over data.
     for i, (inputs, _, labels) in enumerate(dataloader_test):
         inputs = inputs.to(device)
@@ -450,12 +451,7 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda', writ
                 writer.add_scalar('Test loss',
                                     running_loss / (i * inputs.size(0)),
                                     i * inputs.size(0))
-                
-                # ...log a Matplotlib Figure showing the model's predictions on a
-                # random mini-batch
-                writer.add_figure('[test] predictions vs. actuals',
-                                plot_classes_preds(model, inputs, labels),
-                                i * inputs.size(0))
+               
         # forward
         outputs = model(inputs)
         _, preds = torch.max(outputs, 1)
@@ -465,9 +461,26 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda', writ
         running_loss += loss.item()
         running_corrects += torch.sum(preds == labels.data)
         
-        
+        for i in range(labels.data):
+           tpfptnfn[labels[0][i]][outputs[0][i]]+=1
+
+    # Positive means pathological
+    TP = tpfptnfn[1][1] 
+    FN = tpfptnfn[1][0] 
+    FP = tpfptnfn[0][1] 
+    TN = tpfptnfn[0][0] 
                         
-                        
+    accuracy = (TP+TN)/(TP+FP+FN+TN)
+    recall = (TP)/(TP+FN)
+    precision = (TP)/(TP+FP)
+    f1score = 2 * (precision*recall)/(precision+recall)
+
+    print(f'TP: {TP},\t FN: {FN}')       
+    print(f'FP: {FP},\t TN: {TN}\n')       
+    print(f'Accuracy: {accuracy}')
+    print(f'Recall: {recall}')
+    print(f'Precision: {precision}')
+    print(f'F1-Score: {f1score}')
 
     final_loss = running_loss / test_size
     final_acc = running_corrects.double() / test_size
@@ -559,15 +572,15 @@ def iou(mask1, mask2):
 def generate_mask_from_heatmap(heatmap, umbral, maximo=-1):
     try:
         # Pasamos a np array
-        heatmap = heatmap.cpu().detach()
+        heatmap = heatmap.cpu().detach().numpy()
     except:
         pass
 
     # Normalizamos con el máximo representativo
-    #heatmap -= heatmap.min()
+    heatmap -= heatmap.min()
     relu = torch.nn.ReLU()
 
-    heatmap_norm = torch.log2(torch.ones_like(heatmap)+relu(heatmap))
+    heatmap_norm = heatmap #torch.log2(torch.ones_like(heatmap)+relu(heatmap))
     
     if maximo==-1:
         maximo = heatmap_norm.max()
@@ -576,8 +589,8 @@ def generate_mask_from_heatmap(heatmap, umbral, maximo=-1):
     
     
     # Reescalamos
-    heatmap_aumentado = cv2.resize(heatmap.numpy(), dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
-    heatmap_norm_aumentado = cv2.resize(heatmap_norm.numpy(), dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
+    heatmap_aumentado = cv2.resize(heatmap, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
+    heatmap_norm_aumentado = cv2.resize(heatmap_norm, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
     
     # Creamos la máscara
     mask = np.zeros_like(heatmap_norm_aumentado)
@@ -590,7 +603,7 @@ def generate_mask_from_heatmap(heatmap, umbral, maximo=-1):
  
     
 
-def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'):
+def curvas_umbral_mascara(model, technique, dataloader, alpha, validation, device='cuda'):
     model.eval()   # Set model to evaluate mode
 
     # Cogemos los heatmaps para sacar un valor máximo de activación representativo
@@ -599,8 +612,8 @@ def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'
     masks_heatmaps =  list()
     labels_heatmaps =  list()
     print("técnica: ",technique)
-    for i, (inp, mask, label) in enumerate(dataloader_val):
-        if label[0].item()!=1 or mask.mean()/mask.max()>0.9:
+    for i, (inp, mask, label) in enumerate(dataloader):
+        if label[0].item()!=1:# or (mask.mean()/mask.max()>0.9 and validation):
             continue
     
         inp = inp.to(device)
@@ -610,8 +623,24 @@ def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'
         heatmaps.append(model.saliency_map(inp,
                                             technique,
                                             n_noise=10,
-                                            std=0.2,
+                                            std=0.25, 
                                             device=device)[label[0].item()])
+        """
+        UMBRAL (GRADCAMPP Y SMOOTH):
+            - 0.1 
+                +(0.738 y 0.739)
+                +(0.718 y 0.718)
+                +(0.734 y 0.733)
+                +(0.68 y 0.68)
+
+            - 0.25
+                +(0.738 y 0.743)
+                +(0.718 y 0.709)
+                +(0.734 y 0.717)
+                +(0.68 y 0.687)
+
+        
+        """
         masks_heatmaps.append(mask)
         labels_heatmaps.append(label)
 
@@ -625,7 +654,7 @@ def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'
     iou_tabla = []
     
     
-    import math
+    
     nrows =1+int(math.sqrt(len(heatmaps)))
     ncols = int(math.sqrt(len(heatmaps)))
     """
@@ -638,7 +667,7 @@ def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'
     for heatmap, mask, label in zip(heatmaps, masks_heatmaps, labels_heatmaps):
         iou_fila = []
         
-        for umbral in np.linspace(0,1,int((1./alpha)+1)):
+        for umbral in np.concatenate((np.linspace(0,0.25,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1)))):
             heatmap_aumentado, mask_generated = generate_mask_from_heatmap(heatmap=heatmap,
                                                                            umbral=umbral)
 
@@ -676,14 +705,14 @@ def curvas_umbral_mascara(model, technique, dataloader_val, alpha, device='cuda'
     iou_tabla = np.array(iou_tabla)
     valores_iou_medios = iou_tabla.mean(axis=0)
 
-    mejor_umbral = np.argmax(valores_iou_medios)*alpha
+    mejor_umbral = np.concatenate((np.linspace(0,0.25,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1))))[np.argmax(valores_iou_medios)]
     
     return valores_iou_medios, maximo_representativo, mejor_umbral
     
                 
                 
       
-def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=True, device=None):
+def run_umbrales_iou(path_modelos, path_dataset, validation, cam=True, cam_pro=True, device=None):
     # List of technics to train
     model_classes = {'cam': cam, 'cam_pro': cam_pro}
     modelos_base = ['VGG', 'RESNET', 'MOBILENET', 'EFFICIENTNET']
@@ -696,7 +725,7 @@ def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=Tr
 
     # Read datasets
     dataloaders, _ = load_data(path_dataset)
-
+    dataloader = dataloaders['val'] if validation else dataloaders['test']
     models_dic = {}
     
     for modelo_base in modelos_base:
@@ -723,11 +752,14 @@ def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=Tr
             else:
                 technics = ['cam']
 
+
+
             for t_idx, technique in enumerate(technics):
                 iou_medios, maximo_representativo, mejor_umbral = curvas_umbral_mascara(models_dic[f'{modelo_base}-{name}']['model'], 
                                                                                         technique, 
-                                                                                        dataloaders['val'], 
+                                                                                        dataloader, 
                                                                                         alpha=alpha,
+                                                                                        validation=validation,
                                                                                         device=device)
                 iou_tecnicas.append(iou_medios)
                 
@@ -740,10 +772,12 @@ def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=Tr
                 
                 # Área bajo la curva
                 area = 0
+                dominio = np.concatenate((np.linspace(0,0.25,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1))))
                 for i in range(len(iou_medios)-1):
                     minimo = min(iou_medios[i],iou_medios[i+1])
                     maximo = max(iou_medios[i],iou_medios[i+1])
-                    area += minimo*alpha + (maximo-minimo)*(alpha*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+                    base = dominio[i+1]-dominio[i]
+                    area += minimo*base + (maximo-minimo)*(base*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
 
                 areas_bajo_iou.append(area)
                     
@@ -752,15 +786,67 @@ def informacion_umbral_mascaras(path_modelos, path_dataset, cam=True, cam_pro=Tr
 
                 print(title)
                 # Ploteamos
-                axes[axe_idx].plot(np.linspace(0,1,int((1./alpha)+1)), iou_medios, 'o')
-                axes[axe_idx].fill_between(np.linspace(0,1,int((1./alpha)+1)), iou_medios, color='blue', alpha=.25)
+                axes[axe_idx].plot(dominio, iou_medios, 'o')
+                axes[axe_idx].fill_between(dominio, iou_medios, color='blue', alpha=.25)
                 axes[axe_idx].title.set_text(title)
                 axe_idx+=1
                     
         plt.show()
-        print(f"La mejor técnica para {modelo_base}-{name}, ha sido: ", technics[np.argmax(areas_bajo_iou)], " con un área de: ", np.max(areas_bajo_iou))
+        print(f"La mejor técnica para {modelo_base}-{name}, ha sido: ", ['cam','gradcam', 'gradcampp', 'smoothgradcampp'][np.argmax(areas_bajo_iou)], " con un área de: ", np.max(areas_bajo_iou))
     
     
         
         
         
+def comprobacion_max_iou_posible(path_dataset, alpha=0.05):
+    # Read datasets
+    dataloaders, dataset_sizes = load_data(path_dataset)
+    
+    iou_tabla = []
+    for i, (inp, mask_, label) in enumerate(dataloaders['test']):
+        mask = mask_[0]
+        mask_sm = cv2.resize(mask[0].numpy(), dsize=(7,7), interpolation=cv2.INTER_CUBIC)
+
+        iou_fila = []
+
+        if i%200==0:
+            print("Step ",i)
+        
+        for umbral in np.linspace(0,1,int((1./alpha)+1)):
+            _, mask_generated = generate_mask_from_heatmap(heatmap=mask_sm,
+                                                           umbral=umbral)
+
+            iou_fila.append(iou(mask, mask_generated))
+
+        iou_tabla.append(iou_fila)
+
+    iou_tabla = np.array(iou_tabla)
+    iou_medios = iou_tabla.mean(axis=0)
+
+    mejor_umbral = np.argmax(iou_medios)*alpha
+
+    # Área bajo la curva
+    area = 0
+    for i in range(len(iou_medios)-1):
+        minimo = min(iou_medios[i],iou_medios[i+1])
+        maximo = max(iou_medios[i],iou_medios[i+1])
+        area += minimo*alpha + (maximo-minimo)*(alpha*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+
+
+
+    title = f"Mejor valor: {iou_medios.max():.3f}\n con el umbral: {mejor_umbral:.4f}\n"
+    title += f"Área bajo la curva: {area}"
+
+    print(title)
+    
+    fig, ax = plt.subplots(nrows=1,
+                           ncols=1,
+                           figsize=(20,5)) 
+    
+    plt.setp(ax, yticks=np.linspace(0,1,11))
+    # Ploteamos
+    ax.plot(np.linspace(0,1,int((1./alpha)+1)), iou_medios, 'o')
+    ax.fill_between(np.linspace(0,1,int((1./alpha)+1)), iou_medios, color='blue', alpha=.25)
+    ax.title.set_text(title)
+
+    plt.show()
