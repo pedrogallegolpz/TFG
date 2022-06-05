@@ -96,7 +96,7 @@ class CAM_abstract:
         return
     
 
-    def saliency_map(self, x, technique='gradcam', n_noise=1, std=0, device='cuda'):
+    def saliency_map(self, x, technique, n_noise=1, std=0, device='cuda'):
         # Evaluate mode
         self.eval()
 
@@ -144,7 +144,7 @@ class CAM_abstract:
             - std: float
                 amount of standard desviation
         """
-        dic_technics = {'cam':self.name=='CAM',
+        dic_technics = {'cam':self.name=='CAM' and self.name=='CAM',
                         'gradcam':gradcam and self.name!='CAM',
                         'gradcampp':gradcampp and self.name!='CAM',
                         'smoothgradcampp':smoothgradcampp and self.name!='CAM'
@@ -165,8 +165,8 @@ class CAM_abstract:
                 dic_masks[f'{technique}'] = list()
                 for i in range(len(heatmaps_pre)):
                     aux_heatmap, aux_mask = generate_mask_from_heatmap(heatmaps_pre[i],
-                                                                       #maximo_representativo=dic_best_values[f'{technique}-maximo_representativo'],
-                                                                       umbral=dic_best_values[f'{technique}-umbral'])
+                                                                       umbral=0.15#dic_best_values[f'{technique}-umbral']
+                                                                       )
                     dic_heatmaps[f'{technique}'].append(aux_heatmap) 
                     dic_masks[f'{technique}'].append(aux_mask) 
                     

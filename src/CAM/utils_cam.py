@@ -3,6 +3,7 @@ from torchvision.models.resnet import BasicBlock
 import cv2
 import sys
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 import numpy as np
 
 try:
@@ -12,10 +13,24 @@ except:
     from utils import iou, load_model, prepare_mask
     
 
-def plot_grid(x, mask, y, net, n_noise=10, std=0.1, cam=True, gradcam=True, gradcampp=True, smoothgradcampp=True, device='cuda', path_modelos="modelos/"):
+def plot_grid(x, mask, y, 
+              n_noise=10, 
+              std=0.1, 
+              cam=True, gradcam=True, gradcampp=True, smoothgradcampp=True, 
+              vgg=True, resnet=True, mobilenet=True, efficientnet=True,
+              device='cuda', 
+              path_modelos="modelos/"):
+    
     dic_models = {'cam':cam,
-                  'cam_pro':gradcam or gradcampp or smoothgradcampp
-                    }
+                  'cam_pro':gradcam or gradcampp or smoothgradcampp,
+                }
+
+    dic_nets={'vgg': vgg,
+              'resnet': resnet,
+              'mobilenet': mobilenet,
+              'efficientnet': efficientnet
+              }
+
     #############################
     # Prepare original data to plot
     # Unnormalize
@@ -24,86 +39,108 @@ def plot_grid(x, mask, y, net, n_noise=10, std=0.1, cam=True, gradcam=True, grad
         
     x_plot = ((x[0].cpu().permute(1,2,0).numpy())*var)+mean
     x_plot = cv2.resize(x_plot, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
+    x_plot -= x_plot.min()
+    x_plot /= x_plot.max()
 
+    classes = ['BENIGN', 'PATHOLOGICAL']
 
     # Prepare mask to plot
     mask = prepare_mask(mask)
     
     
     #########################
-    # Generate masks 
+    # Matplotlib 
+    font = {'family' : 'serif',
+        'weight' : 'bold',
+        'size'   : 18}
+
+    plt.rc('font', **font)
+
     columnas_grid = 1 + int(cam + gradcam + gradcampp + smoothgradcampp)
-    filas_grid = 2 # [Imagen o Heatmap, Máscara]
-    fig, axes = plt.subplots(nrows=filas_grid,
-                             ncols=columnas_grid,
-                             figsize=(25,10))
+    filas_grid = int(vgg + resnet + mobilenet + efficientnet)
+            
+    fig = plt.figure(figsize=(5*columnas_grid, 5*filas_grid))
+    gs = GridSpec(filas_grid, columnas_grid, figure=fig)
+
+    ax_im_original = fig.add_subplot(gs[1,0])
+    ax_im_original.title.set_text(f"{classes[y[0]]}")
+    ax_im_original.imshow(x_plot)
+    ax_im_original.set_xticks([])
+    ax_im_original.set_yticks([])
+
+    ax_mask_original = fig.add_subplot(gs[2,0])
     
-    axes[0][0].title.set_text("IMAGEN ORIGINAL")
-    axes[0][0].imshow(x_plot)
-    axes[0][0].set_xticks([])
-    axes[0][0].set_yticks([])
+    ax_mask_original.imshow(cv2.cvtColor(mask,cv2.COLOR_GRAY2RGB))
+    ax_mask_original.set_xticks([])
+    ax_mask_original.set_yticks([])  
+
     
-    axes[1][0].imshow(cv2.cvtColor(mask,cv2.COLOR_GRAY2RGB))
-    axes[1][0].set_xticks([])
-    axes[1][0].set_yticks([])    
-    
-    curr_axe_idx = 1
-    for model_name in dic_models.keys():
-        model_dic = load_model(path_modelos, f'{net}-{model_name}', device)
-        model = model_dic['model']
+    curr_row_idx = -1
+    for net_name in dic_nets.keys():
+        if not dic_nets[f'{net_name}']:
+            continue
         
-        dic_heatmaps,dic_masks = model.generate_masks(x,    
-                                                      dic_best_values=model_dic['best_values'],
-                                                      n_noise=n_noise,
-                                                      std=std,
-                                                      gradcam=True,
-                                                      gradcampp=True,
-                                                      smoothgradcampp=True,
-                                                      device='cuda')
-    
-        # utils
-        soft = nn.Softmax(dim=1)
+        curr_row_idx +=1
+        curr_col_idx = 0
+        for model_name in dic_models.keys():
+            model_dic = load_model(path_modelos, f'{net_name.upper()}-{model_name}', device, print_terminal=False)
+            model = model_dic['model']
+            
+            dic_heatmaps,dic_masks = model.generate_masks(x,    
+                                                        dic_best_values=model_dic['best_values'],
+                                                        n_noise=n_noise,
+                                                        std=std,
+                                                        gradcam=True,
+                                                        gradcampp=True,
+                                                        smoothgradcampp=True,
+                                                        device='cuda')
         
-        # Taking the class predicted
-        y_prob = soft(model(x))
-        y_pred_mod_new = np.argmax(y_prob.cpu().detach().numpy(), axis=1)
+            # utils
+            soft = nn.Softmax(dim=1)
+            
+            # Taking the class predicted
+            y_prob = soft(model(x))
+            y_pred_mod_new = np.argmax(y_prob.cpu().detach().numpy(), axis=1)
 
-        classes = ['BENIGN', 'PATHOLOGICAL']
+            ###########################
+            #   HACEMOS PLOT
+            for technique in dic_heatmaps.keys():
+                curr_col_idx += 1
 
-        ###########################
-        #   HACEMOS PLOT
-        for technique in dic_heatmaps.keys():
-            heatmap = dic_heatmaps[f'{technique}'][y_pred_mod_new[0]]
-            
-            mask_model = dic_masks[f'{technique}'][y_pred_mod_new[0]]
-            
-            # IoU
-            iou_valor = iou(mask, mask_model)
-               
-            # Heatmap
-            title = (f'[{net}-{technique}]'+"\n"+"{0}, {1:.1f}%"+"\n"+"(label: {2})"+f"\nIou: {iou_valor}").format(
-                                                                                 classes[y_pred_mod_new[0]],
-                                                                                 y_prob[0,y_pred_mod_new[0]] * 100.0,
-                                                                                 classes[y[0]])
-            axes[0][curr_axe_idx].set_title(title, color=("green" if y_pred_mod_new[0]==y[0] else "red"))
-            
-            axes[0][curr_axe_idx].imshow(heatmap, cmap=plt.get_cmap('turbo')) 
-            axes[0][curr_axe_idx].imshow(x_plot, alpha=0.5)
-    
-            axes[0][curr_axe_idx].set_xticks([])
-            axes[0][curr_axe_idx].set_yticks([])
-            
-            # Máscara
-            title_mask = f"umbral: {model_dic['best_values'][f'{technique}-umbral']:.3f}"
-            axes[1][curr_axe_idx].set_title(title_mask)
+                heatmap = dic_heatmaps[f'{technique}'][y_pred_mod_new[0]]
+                
+                #mask_model = dic_masks[f'{technique}'][y_pred_mod_new[0]]
+                
+                # IoU
+                #iou_valor = iou(mask, mask_model)
+                
+                ax = fig.add_subplot(gs[curr_row_idx,curr_col_idx])
+                if curr_col_idx == 1:
+                    ax.set_ylabel(f'{net_name.upper()}', fontdict=font)
 
-            axes[1][curr_axe_idx].imshow(cv2.cvtColor(mask_model,cv2.COLOR_GRAY2RGB))
-            
-            axes[1][curr_axe_idx].set_xticks([])
-            axes[1][curr_axe_idx].set_yticks([])
-            
-            # Update current axe
-            curr_axe_idx +=1
+                if curr_row_idx == 0:
+                    title = f'{technique.upper().replace("GRAD","Grad-").replace("PP","++").replace("SMOOTH", "Smooth ")}'
+                    ax.set_title(title, fontdict=font) 
+
+                if y_pred_mod_new[0]==y[0]:
+                    plt.setp(ax.spines.values(), color='green', linewidth=5.)
+                else:
+                    plt.setp(ax.spines.values(), color='red', linewidth=5.)                
+
+                ax.imshow(heatmap, cmap=plt.get_cmap('turbo')) 
+                ax.imshow(x_plot, alpha=0.5)
+        
+                props = dict(boxstyle='round', facecolor='wheat', alpha=0.3)
+
+                ax.text(0.05, 0.95, f'Prob: {y_prob[0][y_pred_mod_new[0]]:.3f}', transform=ax.transAxes, fontsize=10,
+                        verticalalignment='top', bbox=props)
+
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+                
+
+                
     plt.show()
 
     return

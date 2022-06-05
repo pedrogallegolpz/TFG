@@ -173,7 +173,7 @@ class CAM(nn.Module, CAM_abstract):
 
                 torch.autograd.backward(s_c[0][class_i], retain_graph=True)
                 
-                gradients_with_noise[class_i] = torch.cat((gradients_with_noise[class_i], act_noise.grad)) #, act_noise.grad[0][None,:]))
+                gradients_with_noise[class_i] = torch.cat((gradients_with_noise[class_i], act_noise.grad)) 
                 
             # Añadimos la salida s_c
             s_c_with_noise = torch.cat((s_c_with_noise, s_c_with_noise_classes[None,:]))
@@ -199,10 +199,8 @@ class CAM(nn.Module, CAM_abstract):
                                              activations = activations.mean(axis=0), 
                                              gradients = gradients_with_noise[class_i]) 
 
-
             if technique!='gradcam':
                 # normalizamos
-                
                 subweights_thresholding = torch.where(relu_dydA>0, subweights, relu_dydA) # donde relu_dydA es cero, esto será cero
                 
                 subweights_normalization_constant = subweights_thresholding.sum(axis=(1,2))
@@ -236,7 +234,6 @@ class CAM(nn.Module, CAM_abstract):
             
             # Alpha
             alpha = numerator / denominator
-            
             
         else:
             alpha = (1./torch.ones_like(activations).sum()) * torch.ones_like(activations)
