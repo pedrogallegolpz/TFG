@@ -23,26 +23,29 @@ class CAM_model(nn.Module, CAM_abstract):
     def __init__(self, originalModel, D_out):
         super(CAM_model, self).__init__()
         
+        
+        # Drop FC
+        fc_removed, in_features_list = remove_modules_type(originalModel, [nn.Linear, nn.Flatten, nn.AdaptiveAvgPool2d])
+        
         try:
             if list(originalModel.children())[-1]==originalModel.classifier:
                 self.features = nn.ModuleList(list(originalModel.children())[:-1])
             else:
-                # Drop FC
-                fc_removed, in_features_list = remove_modules_type(originalModel, [nn.Linear, nn.Flatten, nn.AdaptiveAvgPool2d])
-                
                 self.features = nn.ModuleList(fc_removed)
         except:
             # Si no existe el atributo classifier
-            # Drop FC
-            fc_removed, in_features_list = remove_modules_type(originalModel, [nn.Linear, nn.Flatten, nn.AdaptiveAvgPool2d])
-            
             self.features = nn.ModuleList(fc_removed)
+           
+            
+        # Define new FC with out_features=D_out
+        self.in_features_to_fc = in_features_list[-1]
 
+        print("Neuronas de entrada: ",self.in_features_to_fc)
         self.avgPool_CAM = nn.AdaptiveAvgPool2d(output_size=(1))
         
-        channels = get_output_last_conv(originalModel)
+        print(originalModel)
 
-        self.classifier = nn.Linear(in_features=channels, out_features=D_out, bias=False)
+        self.classifier = nn.Linear(in_features=self.in_features_to_fc, out_features=D_out, bias=False)
         self.n_classes = D_out
         
 
@@ -95,6 +98,8 @@ class CAM(nn.Module, CAM_abstract):
             
         # Define new FC with out_features=D_out
         self.in_features_to_fc = in_features_list[-1]
+
+        print("Neuronas de entrada: ",self.in_features_to_fc)
         
         exp = int(0.5+math.log(self.in_features_to_fc, 2)/2)
         in_out = [self.in_features_to_fc, 2**exp, 2**exp, D_out]

@@ -26,7 +26,7 @@ def plot_grid(x, mask, y,
                 }
 
     dic_nets={'vgg': vgg,
-              'resnet': resnet,
+              'resnet18': resnet,
               'mobilenet': mobilenet,
               'efficientnet': efficientnet
               }
