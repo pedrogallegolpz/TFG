@@ -18,7 +18,7 @@ import numpy as np
 
 from torch.optim import lr_scheduler
 
-import CAM.cam
+
 from dataset import ImageFolder_and_MaskFolder
 
 import cv2
@@ -171,8 +171,12 @@ def load_data(path, dsize=224, batch_size=8, split_size=0.2):# Data augmentation
 
 
 def load_model(path_modelos, name, device, original_model=None, print_terminal=True):
-    name = name.lower()
+    name_low = name.lower()
     model = {}
+
+    if 'efficientnet' in name_low:
+        torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_efficientnet_b0')
+
     # Load model
     try:
         model['model'] = torch.load(path_modelos+f"model_{name}.pth").to(device)
@@ -182,7 +186,8 @@ def load_model(path_modelos, name, device, original_model=None, print_terminal=T
         if print_terminal:
             print(f"model_{name} loaded")
     except:
-        if name.split('-')[-1]=='cam':
+        import CAM.cam 
+        if name_low.split('-')[-1]=='cam':
             model['model'] = CAM.cam.CAM_model(original_model, D_out=2)
         else:
             model['model'] = CAM.cam.CAM(original_model, D_out=2)
@@ -359,11 +364,7 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
                     'EFFICIENTNET': {'model':torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 
                                                             'nvidia_efficientnet_b0', 
                                                             pretrained=True),
-                                     'input_size': 224},
-                    'RESNET101': {'model': torch.hub.load('pytorch/vision:v0.10.0',
-                                                          'resnet101', 
-                                                          pretrained=True),
-                                  'input_size': 224}
+                                     'input_size': 224}
                    }
     
     models_dic = {}
@@ -432,7 +433,7 @@ def train_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True, epochs=
 ############################################################################
 # TEST
 ############################################################################
-def test_model(model, dataloader_test, test_size, criterion, device='cuda', writer=None):
+def test_model(model, dataloader_test, test_size, criterion, maximo_porcentaje_mascara=1., device='cuda', writer=None):
     since = time.time()
 
     model.eval()   # Set model to evaluate mode
@@ -443,7 +444,10 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda', writ
     tpfptnfn = [[0,0],[0,0]]
 
     # Iterate over data.
-    for i, (inputs, mask, labels) in enumerate(dataloader_test):
+    for i, (inputs, mask_, labels) in enumerate(dataloader_test):
+        mask = prepare_mask(mask_)
+        if (mask.mean()/mask.max()>maximo_porcentaje_mascara):
+            continue
         inputs = inputs.to(device)
         labels = labels.to(device)
 
@@ -495,15 +499,16 @@ def test_model(model, dataloader_test, test_size, criterion, device='cuda', writ
     
     time_elapsed = time.time() - since
     print('Testing complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+    print('='*100+'\n')
 
     return final_loss, final_acc
 
 
-def test_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True):
+def test_cam_models(path_modelos, path_dataset, maximo_porcentaje_mascara, cam=True, cam_pro=True):
     # List of technics to train
     technics = {'cam': cam, 'cam_pro': cam_pro}
     
-    modelos_base = ['VGG', 'RESNET18', 'MOBILENET', 'EFFICIENTNET', 'RESNET101']
+    modelos_base = ['VGG', 'RESNET18', 'MOBILENET', 'EFFICIENTNET']
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print('DEVICE: ', device)
@@ -529,6 +534,7 @@ def test_cam_models(path_modelos, path_dataset, cam=True, cam_pro=True):
                        dataloaders['test'], 
                        dataset_sizes['test'],
                        criterion, 
+                       maximo_porcentaje_mascara,
                        device)
             
         
@@ -542,6 +548,8 @@ def prepare_mask(mask):
     except:
         pass
     
+    
+
     if len(mask.shape)!=2:
         if len(mask.shape)==4:
             mask = mask[0]
@@ -559,9 +567,15 @@ def prepare_mask(mask):
     # Reescalamos
     mask = cv2.resize(mask, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
 
+    if mask.max() != mask.min() or mask.max()<0:
+        mask -= mask.min()
+
+    if mask.max()>0:
+        mask /= mask.max()
+
     
-    mask[mask>0.1]=1.
-    mask[mask<0.1]=0.
+    mask[mask>0.3]=1.
+    mask[mask<0.3]=0.
     
     return mask
 
@@ -601,28 +615,18 @@ def generate_mask_from_heatmap(heatmap, umbral, maximo=-1):
         # Pasamos a np array
         heatmap = heatmap.cpu().detach().numpy()
     except:
-        pass
-
-    # Normalizamos con el máximo representativo
-    heatmap -= heatmap.min()
-    relu = torch.nn.ReLU()
-
-    heatmap_norm = heatmap #torch.log2(torch.ones_like(heatmap)+relu(heatmap))
-    
-    if maximo==-1:
-        maximo = heatmap_norm.max()
-    heatmap_norm /= maximo 
-    
-    
+        pass   
     
     # Reescalamos
     heatmap_aumentado = cv2.resize(heatmap, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
-    heatmap_norm_aumentado = cv2.resize(heatmap_norm, dsize=(224, 224), interpolation=cv2.INTER_CUBIC)
-    
+    heatmap_norm_aumentado = heatmap_aumentado
+
+    heatmap_norm_aumentado -= heatmap_norm_aumentado.min() 
+    heatmap_norm_aumentado /= heatmap_norm_aumentado.max() 
+
     # Creamos la máscara
     mask = np.zeros_like(heatmap_norm_aumentado)
     mask[heatmap_norm_aumentado>=umbral] = 1.
-    
     
     return heatmap_aumentado, mask
     
@@ -630,7 +634,7 @@ def generate_mask_from_heatmap(heatmap, umbral, maximo=-1):
  
     
 
-def curvas_umbral_mascara(model, technique, dataloader, alpha, maximo_porcentaje_mascara, device='cuda'):
+def curvas_umbral_mascara(model, technique, dataloader, dominio, maximo_porcentaje_mascara, std_smoothgradcampp=0.25, n_smoothgradcampp=10, device='cuda'):
     model.eval()   # Set model to evaluate mode
 
     # Cogemos los heatmaps para sacar un valor máximo de activación representativo
@@ -639,22 +643,23 @@ def curvas_umbral_mascara(model, technique, dataloader, alpha, maximo_porcentaje
     masks_heatmaps =  list()
     labels_heatmaps =  list()
 
-    num_imagenes_borrar = 0
+    num_imagenes = 0
 
     print("técnica: ",technique)
-    for i, (inp, mask, label) in enumerate(dataloader):
+    for i, (inp, mask_, label) in enumerate(dataloader):
+        mask = prepare_mask(mask_)
         if label[0].item()!=1 or (mask.mean()/mask.max()>maximo_porcentaje_mascara):
             continue
     
-        num_imagenes_borrar+=1
+        num_imagenes+=1
         
         inp = inp.to(device)
         label=label.to(device)
 
         heatmaps.append(model.saliency_map(inp,
                                             technique,
-                                            n_noise=10,
-                                            std=0.25, 
+                                            n_noise=n_smoothgradcampp,
+                                            std=std_smoothgradcampp, 
                                             device=device)[label[0].item()])
         """
         UMBRAL (GRADCAMPP Y SMOOTH):
@@ -679,7 +684,7 @@ def curvas_umbral_mascara(model, technique, dataloader, alpha, maximo_porcentaje
         maximos_heatmaps.append(heatmaps[-1].cpu().max())
             
 
-    print(f"Num Borrar: ",num_imagenes_borrar)
+    print(f"Número de imágenes tenidas en cuenta: ",num_imagenes)
     # Calculamos el valor máximo de activación representativo
     maximo_representativo = np.percentile(maximos_heatmaps, 5)
     
@@ -703,7 +708,7 @@ def curvas_umbral_mascara(model, technique, dataloader, alpha, maximo_porcentaje
         io_originalmask_fila = []
         io_modelmask_fila = []
         
-        for umbral in np.concatenate((np.linspace(0,0.225,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1)))):
+        for umbral in dominio:
             heatmap_aumentado, mask_generated = generate_mask_from_heatmap(heatmap=heatmap,
                                                                            umbral=umbral)
 
@@ -730,9 +735,9 @@ def curvas_umbral_mascara(model, technique, dataloader, alpha, maximo_porcentaje
 
 
     # Mejores umbrales
-    mejor_umbral_iou = np.concatenate((np.linspace(0,0.225,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1))))[np.argmax(valores_iou_medios)]
-    mejor_umbral_io_originalmask = np.concatenate((np.linspace(0,0.225,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1))))[np.argmax(valores_io_originalmask_medios)]
-    mejor_umbral_io_modelmask = np.concatenate((np.linspace(0,0.225,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1))))[np.argmax(valores_io_modelmask_medios)]
+    mejor_umbral_iou = dominio[np.argmax(valores_iou_medios)]
+    mejor_umbral_io_originalmask = dominio[np.argmax(valores_io_originalmask_medios)]
+    mejor_umbral_io_modelmask = dominio[np.argmax(valores_io_modelmask_medios)]
     mejores_umbrales = [mejor_umbral_iou, mejor_umbral_io_originalmask, mejor_umbral_io_modelmask]
 
 
@@ -741,12 +746,12 @@ def curvas_umbral_mascara(model, technique, dataloader, alpha, maximo_porcentaje
                 
                 
       
-def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_mascara=1., cam=True, cam_pro=True, device=None):
+def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_mascara=1., cam=True, cam_pro=True, std_smoothgradcampp=0.25, n_smoothgradcampp=10, device=None):
     # List of technics to train
     model_classes = {'cam': cam, 'cam_pro': cam_pro}
-    modelos_base = ['VGG', 'RESNET18', 'MOBILENET', 'EFFICIENTNET', 'RESNET101']
+    modelos_base = ['VGG', 'RESNET18', 'MOBILENET', 'EFFICIENTNET']
 
-    alpha = 0.05
+    dominio = np.concatenate((np.linspace(0,0.3,int(13)),np.linspace(0.325, 1,int(10))))
 
     if device is None:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -756,6 +761,8 @@ def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_m
     dataloaders, _ = load_data(path_dataset)
     dataloader = dataloaders['val'] if validation else dataloaders['test']
     models_dic = {}
+
+
     
     for modelo_base in modelos_base:
         iou_tecnicas = list()
@@ -787,8 +794,10 @@ def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_m
                 valores_medios, mejores_umbrales, maximo_representativo = curvas_umbral_mascara(models_dic[f'{modelo_base}-{name}']['model'], 
                                                                                         technique, 
                                                                                         dataloader, 
-                                                                                        alpha=alpha,
+                                                                                        dominio=dominio,
                                                                                         maximo_porcentaje_mascara=maximo_porcentaje_mascara,
+                                                                                        std_smoothgradcampp= std_smoothgradcampp,
+                                                                                        n_smoothgradcampp=n_smoothgradcampp,
                                                                                         device=device)
                 iou_tecnicas.append(valores_medios[0])
                 
@@ -802,7 +811,7 @@ def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_m
                 for i in range(len(valores_medios)):
                     # Área bajo la curva
                     area = 0
-                    dominio = np.concatenate((np.linspace(0,0.225,int((0.5/alpha))),np.linspace(0.25,1,int((0.5/alpha)+1))))
+                    
                     for j in range(len(valores_medios[i])-1):
                         minimo = min(valores_medios[i][j],valores_medios[i][j+1])
                         maximo = max(valores_medios[i][j],valores_medios[i][j+1])
@@ -819,7 +828,7 @@ def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_m
                     elif i==2:
                         title = f"Precision del mejor umbral: {valores_medios[2][valores_medios[0].argmax()]:.4f}"
 
-                    print(title)
+                    #print('\n'+title)
                     # Ploteamos
                     axes[i][axe_idx].plot(dominio, valores_medios[i], 'o', color=colors[i])
                     axes[i][axe_idx].fill_between(dominio, valores_medios[i], color=colors[i], alpha=.25)
@@ -833,12 +842,17 @@ def run_umbrales_iou(path_modelos, path_dataset, validation, maximo_porcentaje_m
         
         
         
-def comprobacion_max_iou_posible(path_dataset, alpha=0.05):
+def comprobacion_max_iou_posible(path_dataset,  maximo_porcentaje_mascara=0.5):
     # Read datasets
     dataloaders, dataset_sizes = load_data(path_dataset)
-    
+    dominio = np.concatenate((np.linspace(0,0.3,int(13)),np.linspace(0.325, 1,int(10))))
+   
     iou_tabla = []
     for i, (inp, mask_, label) in enumerate(dataloaders['test']):
+        mask_aux = prepare_mask(mask_)
+        if label[0].item()==0 or mask_aux.mean()/mask_aux.max()>maximo_porcentaje_mascara:
+            continue
+
         mask = mask_[0]
         mask_sm = cv2.resize(mask[0].numpy(), dsize=(7,7), interpolation=cv2.INTER_CUBIC)
 
@@ -847,7 +861,7 @@ def comprobacion_max_iou_posible(path_dataset, alpha=0.05):
         if i%200==0:
             print("Step ",i)
         
-        for umbral in np.linspace(0,1,int((1./alpha)+1)):
+        for umbral in dominio:
             _, mask_generated = generate_mask_from_heatmap(heatmap=mask_sm,
                                                            umbral=umbral)
 
@@ -858,14 +872,15 @@ def comprobacion_max_iou_posible(path_dataset, alpha=0.05):
     iou_tabla = np.array(iou_tabla)
     iou_medios = iou_tabla.mean(axis=0)
 
-    mejor_umbral = np.argmax(iou_medios)*alpha
-
+    mejor_umbral = dominio[np.argmax(iou_medios)]
     # Área bajo la curva
     area = 0
-    for i in range(len(iou_medios)-1):
-        minimo = min(iou_medios[i],iou_medios[i+1])
-        maximo = max(iou_medios[i],iou_medios[i+1])
-        area += minimo*alpha + (maximo-minimo)*(alpha*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+    for j in range(len(iou_medios)-1):
+        minimo = min(iou_medios[j],iou_medios[j+1])
+        maximo = max(iou_medios[j],iou_medios[j+1])
+        base = dominio[j+1]-dominio[j]
+        area += minimo*base + (maximo-minimo)*(base*0.5)   # Es como sumar el cuadrado y luego el triángulo que queda arriba     
+
 
 
 
@@ -876,12 +891,14 @@ def comprobacion_max_iou_posible(path_dataset, alpha=0.05):
     
     fig, ax = plt.subplots(nrows=1,
                            ncols=1,
-                           figsize=(20,5)) 
+                           figsize=(5,5)) 
     
-    plt.setp(ax, yticks=np.linspace(0,1,11))
     # Ploteamos
-    ax.plot(np.linspace(0,1,int((1./alpha)+1)), iou_medios, 'o')
-    ax.fill_between(np.linspace(0,1,int((1./alpha)+1)), iou_medios, color='blue', alpha=.25)
+    ax.plot(dominio, iou_medios, 'o', color='green')
+    ax.fill_between(dominio, iou_medios, color='green', alpha=.25)
     ax.title.set_text(title)
+    ax.set_xlabel("umbral")
+    ax.set_ylabel("IoU")
+    ax.set_yticks(np.linspace(0,1,11))
 
     plt.show()

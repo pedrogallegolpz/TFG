@@ -9,7 +9,6 @@ import numpy as np
 try:
     from utils import iou, load_model, prepare_mask
 except:
-    sys.path.append("../")
     from utils import iou, load_model, prepare_mask
     
 
@@ -25,11 +24,18 @@ def plot_grid(x, mask, y,
                   'cam_pro':gradcam or gradcampp or smoothgradcampp,
                 }
 
+
     dic_nets={'vgg': vgg,
               'resnet18': resnet,
               'mobilenet': mobilenet,
               'efficientnet': efficientnet
               }
+
+    dic_technics={  'cam': cam,
+                    'gradcam': gradcam,
+                    'gradcampp': gradcampp,
+                    'smoothgradcampp': smoothgradcampp
+                    }
 
     #############################
     # Prepare original data to plot
@@ -56,33 +62,47 @@ def plot_grid(x, mask, y,
 
     plt.rc('font', **font)
 
-    columnas_grid = 1 + int(cam + gradcam + gradcampp + smoothgradcampp)
     filas_grid = int(vgg + resnet + mobilenet + efficientnet)
+    columnas_grid = 1 + int(filas_grid==1) + int(cam + gradcam + gradcampp + smoothgradcampp)
+
             
     fig = plt.figure(figsize=(5*columnas_grid, 5*filas_grid))
     gs = GridSpec(filas_grid, columnas_grid, figure=fig)
 
-    ax_im_original = fig.add_subplot(gs[1,0])
+    if filas_grid>1:
+        gs_aux = gs[int(filas_grid/2-0.5),0]
+    else:
+        gs_aux = gs[0]
+
+
+    ax_im_original = fig.add_subplot(gs_aux)
     ax_im_original.title.set_text(f"{classes[y[0]]}")
     ax_im_original.imshow(x_plot)
     ax_im_original.set_xticks([])
     ax_im_original.set_yticks([])
 
-    ax_mask_original = fig.add_subplot(gs[2,0])
+    if filas_grid>1:
+        gs_aux = gs[1+int(filas_grid/2-0.5),0]
+    else:
+        gs_aux = gs[1]
     
+    ax_mask_original = fig.add_subplot(gs_aux)
     ax_mask_original.imshow(cv2.cvtColor(mask,cv2.COLOR_GRAY2RGB))
     ax_mask_original.set_xticks([])
     ax_mask_original.set_yticks([])  
 
     
-    curr_row_idx = -1
+    curr_row_idx = -1 
     for net_name in dic_nets.keys():
         if not dic_nets[f'{net_name}']:
             continue
         
         curr_row_idx +=1
-        curr_col_idx = 0
+        curr_col_idx = int(filas_grid==1)
         for model_name in dic_models.keys():
+            if not dic_models[f'{model_name}']:
+                continue
+
             model_dic = load_model(path_modelos, f'{net_name.upper()}-{model_name}', device, print_terminal=False)
             model = model_dic['model']
             
@@ -90,9 +110,9 @@ def plot_grid(x, mask, y,
                                                         dic_best_values=model_dic['best_values'],
                                                         n_noise=n_noise,
                                                         std=std,
-                                                        gradcam=True,
-                                                        gradcampp=True,
-                                                        smoothgradcampp=True,
+                                                        gradcam=gradcam,
+                                                        gradcampp=gradcampp,
+                                                        smoothgradcampp=smoothgradcampp,
                                                         device='cuda')
         
             # utils
@@ -105,6 +125,8 @@ def plot_grid(x, mask, y,
             ###########################
             #   HACEMOS PLOT
             for technique in dic_heatmaps.keys():
+                if not dic_technics[f'{technique}']:
+                    continue
                 curr_col_idx += 1
 
                 heatmap = dic_heatmaps[f'{technique}'][y_pred_mod_new[0]]
@@ -114,7 +136,12 @@ def plot_grid(x, mask, y,
                 # IoU
                 #iou_valor = iou(mask, mask_model)
                 
-                ax = fig.add_subplot(gs[curr_row_idx,curr_col_idx])
+                if filas_grid>1:
+                    gs_aux = gs[curr_row_idx,curr_col_idx]
+                else:
+                    gs_aux = gs[curr_col_idx]
+
+                ax = fig.add_subplot(gs_aux)
                 if curr_col_idx == 1:
                     ax.set_ylabel(f'{net_name.upper()}', fontdict=font)
 
@@ -127,7 +154,7 @@ def plot_grid(x, mask, y,
                 else:
                     plt.setp(ax.spines.values(), color='red', linewidth=5.)                
 
-                ax.imshow(heatmap, cmap=plt.get_cmap('turbo')) 
+                ax.imshow(heatmap, cmap=plt.get_cmap('jet')) 
                 ax.imshow(x_plot, alpha=0.5)
         
                 props = dict(boxstyle='round', facecolor='wheat', alpha=0.3)

@@ -8,8 +8,11 @@ import sys
 try:
     from utils import generate_mask_from_heatmap
 except:
-    sys.path.append("../")
-    from utils import generate_mask_from_heatmap
+    try:
+        sys.path.append("../")
+        from utils import generate_mask_from_heatmap
+    except:
+        pass # circular import
     
     
 import matplotlib.pyplot as plt
